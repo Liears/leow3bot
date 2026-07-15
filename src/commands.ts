@@ -2,17 +2,21 @@
 
 import { MODEL } from './config.js';
 import { SKILLS_REGISTRY } from './skills.js';
+import { TOOLS_SCHEMAS } from './tools.js';
+import { getSystem } from './agent.js';
+import { getState } from './store.js';
+import { countTokens } from './llm.js';
 import { saveSession, loadSession, listSessions } from './session.js';
 import { compactMediaMessages, compactOldToolResults } from './compaction.js';
 import type { CommittedItem, ContentBlock, MessageParam } from './types.js';
 
-// DeepAnalyze 实心 logo（DA）
+// MiniClaude 实心 logo（MC）：左 M（7 列）+ 间隔 + 右 C（6 列）。
 export const LOGO = [
-  '██████   █████',
-  '██   ██ ██   ██',
-  '██   ██ ███████',
-  '██   ██ ██   ██',
-  '██████  ██   ██',
+  '███  ██   ██████',
+  '████ ██   ██',
+  '██ ████   ██',
+  '██  ███   ██',
+  '██   ██   ██████',
 ];
 
 export const COMMANDS = [
@@ -53,7 +57,7 @@ function textOf(content: unknown): string {
   return String(content ?? '');
 }
 
-export function handleCommand(cmd: string, args: string[], ctx: CmdCtx): CmdResult {
+export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): Promise<CmdResult> {
   switch (cmd) {
     case 'q':
     case 'quit':
@@ -61,15 +65,36 @@ export function handleCommand(cmd: string, args: string[], ctx: CmdCtx): CmdResu
       return { exit: true };
     case 'help':
       return { output: '可用命令:  ' + COMMANDS.map(c => '/' + c).join('  '), tone: 'muted' };
-    case 'context':
+    case 'context': {
       ctx.toggleCtx();
-      return { output: 'context 状态栏: ' + (!ctx.showCtx ? '开启' : '关闭'), tone: 'ok' };
+      const sys = getSystem();
+      const msgs = ctx.getMessages();
+      // countTokens 精确分项（模型 tokenizer）：base=system, +tools, +messages 三次差值
+      const base = await countTokens(sys, [], []);
+      const withTools = await countTokens(sys, [], TOOLS_SCHEMAS);
+      const total = await countTokens(sys, msgs, TOOLS_SCHEMAS);
+      if (base == null || withTools == null || total == null) {
+        return { output: 'countTokens 不可用（dashscope 可能不支持 /v1/messages/count_tokens beta 端点）', tone: 'err' };
+      }
+      const lines = [
+        `context 状态栏: ${!ctx.showCtx ? '开启' : '关闭'}`,
+        '',
+        '上下文占用明细（countTokens 精确）:',
+        `  system prompt  ${base}`,
+        `  tools schema   ${withTools - base}  (${TOOLS_SCHEMAS.length} tools)`,
+        `  对话历史        ${total - withTools}  (${msgs.length} 条)`,
+        `  合计            ${total}`,
+      ];
+      const api = getState().usage?.input_tokens;
+      if (api != null) lines.push(`  API 上报        ${api}`);
+      return { output: lines.join('\n'), tone: 'muted' };
+    }
     case 'perf':
       ctx.togglePerf();
       return { output: 'perf 状态栏: ' + (!ctx.showPerf ? '开启' : '关闭'), tone: 'ok' };
     case 'verbose':
       ctx.toggleThinking();
-      return { output: '思考内容: ' + (!ctx.showThinking ? '显示' : '折叠'), tone: 'ok' };
+      return { output: '思考过程: ' + (!ctx.showThinking ? '展开' : '折叠'), tone: 'ok' };
     case 'clear':
       ctx.clearMessages();
       ctx.setMessages([]);
@@ -138,15 +163,7 @@ export function handleCommand(cmd: string, args: string[], ctx: CmdCtx): CmdResu
   }
 }
 
-export function getWelcomeItems(opts: { model: string; nTools: number; nSkills: number; cwd: string }): CommittedItem[] {
-  const info = [
-    'DeepAnalyze',
-    opts.model,
-    `${opts.nTools} tools` + (opts.nSkills ? ` · ${opts.nSkills} skill` : ''),
-    opts.cwd,
-    '/help · /load · q',
-  ];
-  const lines = LOGO.map((lg, i) => lg + '   ' + (info[i] ?? ''));
-  lines.push('');
-  return [{ kind: 'system', text: lines.join('\n') + '─'.repeat(60), tone: 'muted' }];
+// welcome：仅 logo + 名称横向并排（model/tools/cwd 移至 StatusBar）。
+export function getWelcomeItems(): CommittedItem[] {
+  return [{ kind: 'logo', logo: LOGO, name: 'MiniClaude' }];
 }

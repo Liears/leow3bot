@@ -9,20 +9,25 @@
   "scripts": {
     "start": "tsx src/main.tsx",
     "probe": "tsx src/scripts/probe.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:md": "FORCE_COLOR=1 tsx src/scripts/test-markdown.tsx",
+    "test:app": "FORCE_COLOR=1 tsx src/scripts/test-app.tsx",
+    "test:store": "tsx src/scripts/test-store.ts",
+    "test": "tsc --noEmit && npm run test:md && npm run test:store && npm run test:app"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.1",
-    "gray-matter": "^4.0.3",
+    "gray-matter": "^2.0.1",
     "ink": "^5.0.1",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "react": "^18.3.1",
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "strip-ansi": "^7.2.0"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
-    "@types/react": "^18.3.0",
+    "@types/react": "^18.3.31",
     "ink-testing-library": "^4.0.0",
     "tsx": "^4.22.4",
     "typescript": "^5.6.0"

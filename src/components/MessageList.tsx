@@ -1,14 +1,9 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { CommittedItem, ContentBlock } from '../types.js';
-import { SYM_USER, SYM_TOOL, SYM_RESULT, ACCENT } from '../config.js';
-
-function renderBlock(b: ContentBlock, key: number): React.ReactNode {
-  if (b.type === 'text') return <Text key={key}>{b.text}</Text>;
-  if (b.type === 'thinking') return null; // 折叠（/verbose 时由动态区显示当前思考）
-  // tool_use / tool_result 在独立的 tool_start/tool_result item 渲染，assistant content 内不重复显示
-  return null;
-}
+import type { CommittedItem } from '../types.js';
+import { SYM_USER, SYM_TOOL, SYM_RESULT, SYM_THINK, ACCENT } from '../config.js';
+import { gradientHex } from '../lib/format.js';
+import { renderMarkdownLine, renderInline } from '../lib/markdown.js';
 
 export default function MessageList({ item }: { item: CommittedItem }) {
   switch (item.kind) {
@@ -19,19 +14,24 @@ export default function MessageList({ item }: { item: CommittedItem }) {
           <Text color={ACCENT}>{item.text}</Text>
         </Box>
       );
-    case 'assistant':
+    case 'assistant_line':
+      return <Box>{renderMarkdownLine(item.text, item.code ?? false).node}</Box>;
+    case 'thinking':
+      return (
+        <Box><Text dimColor italic>{SYM_THINK} {item.text}</Text></Box>
+      );
+    case 'thinking_line':
       return (
         <Box flexDirection="column">
-          {item.content.map((b, i) => renderBlock(b, i))}
+          {item.text.split('\n').map((l, i) => (
+            <Text key={i} dimColor italic>{i === 0 ? `${SYM_THINK} ` : '  '}{renderInline(l)}</Text>
+          ))}
         </Box>
       );
-    case 'thinking':
-      return null;
     case 'tool_start':
       return (
         <Box>
-          <Text color={ACCENT} bold>{SYM_TOOL} {item.call.name}</Text>
-          {' '}
+          <Text color={ACCENT} bold>{SYM_TOOL} {item.call.name} </Text>
           <Text dimColor>{summarizeInput(item.call.input)}</Text>
         </Box>
       );
@@ -47,6 +47,28 @@ export default function MessageList({ item }: { item: CommittedItem }) {
       return (
         <Box>
           <Text color={color} dimColor={item.tone === 'muted'}>{item.text}</Text>
+        </Box>
+      );
+    }
+    case 'logo': {
+      // logo block 与名称横向并排；按「列位置」着色 → 整块水平彩虹，名称逐字符渐变。
+      const maxW = Math.max(...item.logo.map(l => l.length));
+      return (
+        <Box alignItems="center" gap={2}>
+          <Box flexDirection="column">
+            {item.logo.map((line, ri) => (
+              <Text key={ri}>
+                {Array.from({ length: maxW }, (_, ci) => (
+                  <Text key={ci} color={gradientHex(ci / Math.max(1, maxW - 1))}>{line[ci] ?? ' '}</Text>
+                ))}
+              </Text>
+            ))}
+          </Box>
+          <Text bold>
+            {item.name.split('').map((ch, ni) => (
+              <Text key={ni} color={gradientHex(ni / Math.max(1, item.name.length - 1))}>{ch}</Text>
+            ))}
+          </Text>
         </Box>
       );
     }

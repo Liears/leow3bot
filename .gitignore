@@ -19,6 +19,10 @@ __pycache__/
 .env.*
 !.env.example
 
+# 用户配置（含 API key，不提交）
+config.json
+!config.example.json
+
 # 会话存储（运行时生成）
 .miniclaude/
 

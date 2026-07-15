@@ -142,3 +142,16 @@ export async function* callLLMStream(
     yield { type: 'done', assistant_msg: assistantMsg, usage, timing };
   }
 }
+
+// countTokens（beta，/v1/messages/count_tokens）：用模型 tokenizer 精确计数，供 /context 明细用。
+// dashscope 若不支持该 beta 端点会抛错，catch 返回 null。
+export async function countTokens(system: string, messages: MessageParam[], tools: unknown[]): Promise<number | null> {
+  try {
+    const r = await getClient().beta.messages.countTokens({
+      model: MODEL, system, messages: messages as never, tools: tools as never,
+    } as never);
+    return (r as { input_tokens: number }).input_tokens;
+  } catch {
+    return null;
+  }
+}

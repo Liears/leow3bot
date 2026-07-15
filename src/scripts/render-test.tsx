@@ -11,23 +11,27 @@ const ctx = () => ({
   getMessages: () => [], setMessages: () => {},
 });
 
-console.log('--- /context toggle ---');
-console.log('  before showCtx:', getState().showCtx);
-console.log('  result:', handleCommand('context', [], ctx()));
-console.log('  after  showCtx:', getState().showCtx);
+async function main() {
+  console.log('--- /context toggle ---');
+  console.log('  before showCtx:', getState().showCtx);
+  console.log('  result:', await handleCommand('context', [], ctx()));
+  console.log('  after  showCtx:', getState().showCtx);
 
-console.log('--- /perf toggle ---');
-console.log('  result:', handleCommand('perf', [], ctx()));
-console.log('  after  showPerf:', getState().showPerf);
+  console.log('--- /perf toggle ---');
+  console.log('  result:', await handleCommand('perf', [], ctx()));
+  console.log('  after  showPerf:', getState().showPerf);
 
-console.log('--- /verbose toggle ---');
-console.log('  result:', handleCommand('verbose', [], ctx()));
+  console.log('--- /verbose toggle ---');
+  console.log('  result:', await handleCommand('verbose', [], ctx()));
 
-console.log('--- /help ---');
-console.log('  result:', handleCommand('help', [], ctx()).output?.slice(0, 60));
+  console.log('--- /help ---');
+  console.log('  result:', (await handleCommand('help', [], ctx())).output?.slice(0, 60));
 
-console.log('--- /q (exit) ---');
-console.log('  result:', handleCommand('q', [], ctx()));
+  console.log('--- /q (exit) ---');
+  console.log('  result:', await handleCommand('q', [], ctx()));
 
-console.log('--- /unknown ---');
-console.log('  result:', handleCommand('foobar', [], ctx()));
+  console.log('--- /unknown ---');
+  console.log('  result:', await handleCommand('foobar', [], ctx()));
+}
+
+main();

@@ -1,10 +1,42 @@
-// 配置常量（移植 config.py）。密钥只从 env 读，绝不硬编码。
+// 配置常量。用户可改的字段（apiBaseUrl/apiKey/model/maxTokens/contextWindow/temperature）
+// 从同目录的 config.json 读取，其余为本项目内部常量。
+// 配置方法：复制 config.example.json → config.json，改里面的值即可。
 
-export const API_BASE_URL = 'https://dashscope.aliyuncs.com/apps/anthropic'; // SDK 自动追加 /v1/messages
-export const MODEL = 'qwen3.7-plus';
-export const MAX_TOKENS = 131072;
-export const CONTEXT_WINDOW = 131072;
-export const TEMPERATURE = 0.7;
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+interface UserConfig {
+  apiBaseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  maxTokens?: number;
+  contextWindow?: number;
+  temperature?: number;
+}
+
+function loadConfig(): UserConfig {
+  try {
+    return JSON.parse(readFileSync(path.join(import.meta.dirname ?? '.', '..', 'config.json'), 'utf-8'));
+  } catch {
+    return {}; // config.json 不存在时用下面的默认值
+  }
+}
+
+const cfg = loadConfig();
+
+// —— 用户可配置项（config.json 覆盖）——
+export const API_BASE_URL = cfg.apiBaseUrl ?? 'https://open.bigmodel.cn/api/anthropic';
+export const API_KEY = cfg.apiKey ?? '';
+export const MODEL = cfg.model ?? 'glm-5.1';
+export const MAX_TOKENS = cfg.maxTokens ?? 192000;
+export const CONTEXT_WINDOW = cfg.contextWindow ?? 192000;
+export const TEMPERATURE = cfg.temperature ?? 0.7;
+
+export function getApiKey(): string {
+  return API_KEY;
+}
+
+// —— 内部常量（一般不需改）——
 export const TOP_P: number | null = null;
 export const TOP_K: number | null = null;
 export const MAX_CONCURRENT_TOOLS = 10;
@@ -26,9 +58,3 @@ export const SYM_TOOL = '⏺';
 export const SYM_RESULT = '⎿';
 export const SYM_THINK = '✻';
 export const ACCENT = '#D97757';
-
-export function getApiKey(): string {
-  const k = process.env.DASHSCOPE_API_KEY;
-  if (!k) throw new Error('请设置 DASHSCOPE_API_KEY 环境变量');
-  return k;
-}

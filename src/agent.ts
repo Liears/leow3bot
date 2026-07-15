@@ -2,7 +2,7 @@
 
 import { callLLMStream } from './llm.js';
 import {
-  commit, appendText, appendThinking, resetStream, setPhase, setUsageTiming,
+  commit, appendText, appendThinking, flushText, commitThinking, resetMarkdown, setPhase, setUsageTiming,
   setError, getState, toggleCtx, togglePerf, toggleThinking,
 } from './store.js';
 import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS } from './config.js';
@@ -23,6 +23,7 @@ export function getMessages(): MessageParam[] { return messages; }
 export function clearMessages(): void { messages.length = 0; }
 export function setMessages(m: MessageParam[]): void { messages.length = 0; messages.push(...m); }
 export function setSystem(s: string): void { system = s; }
+export function getSystem(): string { return system; }
 
 function appendUserMessage(text: string): void {
   // 角色合并（对齐 Python _append_user_message）
@@ -54,10 +55,10 @@ interface Outcome {
 }
 
 // 命令 / 图片 / 对话分发
-export function handleSubmit(text: string, images: PastedImg[], exit: () => void): void {
+export async function handleSubmit(text: string, images: PastedImg[], exit: () => void): Promise<void> {
   const parsed = parseCommand(text);
   if (parsed) {
-    const r = handleCommand(parsed.cmd, parsed.args, makeCtx());
+    const r = await handleCommand(parsed.cmd, parsed.args, makeCtx());
     if (r?.exit) { exit(); return; }
     if (r?.output) commit({ kind: 'system', text: r.output, tone: r.tone ?? 'muted' });
     autosaveSession(messages);
@@ -100,13 +101,16 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
     try {
       for await (const ev of callLLMStream(messages, TOOLS_SCHEMAS, system, controller.signal)) {
         if (ev.type === 'text') {
+          // 回复开始：思考 commit 进 scrollback 保留，再清窗口
+          commitThinking();
           appendText(ev.text);
         } else if (ev.type === 'thinking') {
-          if (getState().showThinking) appendThinking(ev.text);
+          appendThinking(ev.text); // 内部按 showThinking 决定是否进 scrollback
         } else {
-          // done / tool_call / interrupted：快照 commit 进 scrollback
-          commit({ kind: 'assistant', content: ev.assistant_msg.content as ContentBlock[] });
-          resetStream();
+          // done / tool_call / interrupted：思考 commit 进 scrollback + flush 未完成段 + API 历史。
+          commitThinking();
+          flushText();
+          resetMarkdown();
           setUsageTiming(ev.usage, ev.timing);
           messages.push(ev.assistant_msg);
           outcome = ev;

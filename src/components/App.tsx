@@ -6,6 +6,7 @@ import { SYM_THINK, ACCENT } from '../config.js';
 import MessageList from './MessageList.js';
 import Input from './Input.js';
 import StatusBar from './StatusBar.js';
+import { renderInline } from '../lib/markdown.js';
 import { handleSubmit, abortRef } from '../agent.js';
 
 export default function App() {
@@ -28,20 +29,15 @@ export default function App() {
         {(item, i) => <MessageList key={i} item={item} />}
       </Static>
 
-      {/* 动态区：每帧 diff */}
-      {s.phase === 'thinking' ? (
+      {/* 动态区：流式时只显示生成指示（不渲染未完成段，避免标准 ink 动态区残留）。
+          完整行逐行 commit 进 scrollback，markdown 渲染闭合后的整行。 */}
+      {s.streamingThinking ? (
+        <ThinkingWindow text={s.streamingThinking} />
+      ) : (s.phase === 'thinking' || s.phase === 'streaming') ? (
         <Box gap={1}>
           <Text color={ACCENT}><Spinner type="dots" /></Text>
-          <Text dimColor italic>{SYM_THINK} Thinking…</Text>
+          <Text dimColor italic>{s.phase === 'thinking' ? `${SYM_THINK} thinking…` : '生成中…'}</Text>
         </Box>
-      ) : null}
-
-      {s.streamingThinking ? (
-        <Box><Text dimColor italic>{SYM_THINK} {s.streamingThinking}</Text></Box>
-      ) : null}
-
-      {s.streamingText ? (
-        <Box><Text>{s.streamingText}</Text></Box>
       ) : null}
 
       {s.error ? (
@@ -56,6 +52,25 @@ export default function App() {
       ) : null}
 
       <StatusBar />
+    </Box>
+  );
+}
+
+// 思考窗口：固定 4 行（不足补空行），高度恒定避免 ink 动态区擦不净导致 spinner 残留。
+function ThinkingWindow({ text }: { text: string }) {
+  const lines = text.split('\n').slice(-4);
+  const padded = [...lines, ...Array(Math.max(0, 4 - lines.length)).fill('')];
+  return (
+    <Box flexDirection="column">
+      <Box gap={1}>
+        <Text color={ACCENT}><Spinner type="dots" /></Text>
+        <Text dimColor italic>{SYM_THINK} thinking…</Text>
+      </Box>
+      <Box flexDirection="column">
+        {padded.map((l, i) => (
+          <Text key={i} dimColor italic>{l ? renderInline(l) : ' '}</Text>
+        ))}
+      </Box>
     </Box>
   );
 }

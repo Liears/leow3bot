@@ -32,7 +32,13 @@ export default function Input({ onSubmit, promptLabel }: Props) {
   }, [value, isAsk]);
 
   useInput((input, key) => {
-    if (key.tab && matches.length) setCompIdx(i => (i + 1) % matches.length);
+    if (key.tab && matches.length) {
+      setCompIdx(i => {
+        const next = (i + 1) % matches.length;
+        setValue('/' + matches[next]); // Tab 即时补全到输入框
+        return next;
+      });
+    }
     if (key.ctrl && input === 'v') void doPaste();
   });
 
@@ -42,7 +48,8 @@ export default function Input({ onSubmit, promptLabel }: Props) {
     const { data, mediaType } = await compressImage(raw, '.png');
     const id = nextId.current++;
     pasted.current.set(id, { data, mediaType, dims: '?' });
-    setValue(v => v + `[Image #${id}] `);
+    // 抹掉 TextInput 在 ctrl+v 时误追加的 'v'（它没拦截 ctrl+v），再插入 [Image #N]
+    setValue(v => v.replace(/v$/, '') + `[Image #${id}] `);
     setFeedback(`✓ Image #${id} · ${mediaType} · ${fmtSize(data.length)}`);
   }
 
@@ -83,14 +90,13 @@ export default function Input({ onSubmit, promptLabel }: Props) {
       {matches.length > 0 ? (
         <Box flexDirection="column" marginLeft={2}>
           {matches.slice(0, 8).map((c, i) => (
-            <Text key={c} color={i === compIdx ? ACCENT : undefined} dimColor={i !== compIdx}>
+            <Text key={c} color={i === compIdx ? ACCENT : undefined} bold={i === compIdx}>
               {i === compIdx ? '▶ ' : '  '}/{c}
             </Text>
           ))}
         </Box>
       ) : null}
       {feedback ? <Box marginLeft={2}><Text dimColor>{feedback}</Text></Box> : null}
-      <Box marginLeft={2}><Text dimColor>Tab 补全 · Ctrl-V 粘贴图片 · q 退出</Text></Box>
     </Box>
   );
 }

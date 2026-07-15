@@ -4,7 +4,7 @@
 import React from 'react';
 import { render } from 'ink';
 import App from './components/App.js';
-import { commit } from './store.js';
+import { commit, setMeta } from './store.js';
 import { loadSkills, getSkillListing, SKILLS_REGISTRY } from './skills.js';
 import { setSystem } from './agent.js';
 import { getWelcomeItems } from './commands.js';
@@ -15,13 +15,12 @@ loadSkills(SKILL_DIR);
 const skillListing = getSkillListing();
 setSystem(SYSTEM_PROMPT + (skillListing ? '\n\n' + skillListing : ''));
 
-for (const item of getWelcomeItems({
+setMeta({
   model: MODEL,
   nTools: Object.keys(TOOLS_REGISTRY).length,
   nSkills: SKILLS_REGISTRY.size,
   cwd: process.cwd(),
-})) {
-  commit(item);
-}
+});
+for (const item of getWelcomeItems()) commit(item);
 
 render(React.createElement(App));

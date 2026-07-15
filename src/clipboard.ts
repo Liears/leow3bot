@@ -45,14 +45,19 @@ function readWlPaste(): Buffer | null {
 
 function readDarwin(): Buffer | null {
   if (process.platform !== 'darwin') return null;
-  const chk = spawnSync('osascript', ['-e', 'the clipboard as «class PNGf»'], { timeout: 5000 });
-  if (chk.status !== 0) return null;
-  const tmp = path.join(tmpdir(), `mc-clip-${Date.now()}.png`);
+  // 用 clipboard info 判断图片格式（输出小）；不能用 as 直接检查——大图会撑爆 spawnSync 默认 1MB maxBuffer
+  const info = spawnSync('osascript', ['-e', 'clipboard info'], { timeout: 5000 });
+  const infoStr = (info.stdout ?? '').toString();
+  const cls = infoStr.includes('PNGf') ? 'PNGf' : infoStr.includes('TIFF') ? 'TIFF' : null;
+  if (!cls) return null;
+  const ext = cls === 'PNGf' ? 'png' : 'tiff';
+  const tmp = path.join(tmpdir(), `mc-clip-${Date.now()}.${ext}`);
   try {
+    // 图片数据写到临时文件（不经 stdout，避开 maxBuffer），sharp 下游统一转 PNG
     const script =
-      'set png_data to (the clipboard as «class PNGf»)\n' +
+      `set img_data to (the clipboard as «class ${cls}»)\n` +
       `set fp to open for access POSIX file "${tmp}" with write permission\n` +
-      'write png_data to fp\n' +
+      'write img_data to fp\n' +
       'close access fp';
     const r = spawnSync('osascript', ['-e', script], { timeout: 10_000 });
     if (r.status !== 0 || !existsSync(tmp) || statSync(tmp).size === 0) return null;
