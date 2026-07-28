@@ -20,7 +20,7 @@ const cases: { text: string; inCode: boolean; expect: string }[] = [
 let pass = 0;
 let fail = 0;
 for (const c of cases) {
-  const { node } = renderMarkdownLine(c.text, c.inCode);
+  const node = renderMarkdownLine(c.text, c.inCode);
   const out = render(node).lastFrame() ?? '';
   const text = stripAnsi(out);
   const ok = text.includes(c.expect);
@@ -29,8 +29,8 @@ for (const c of cases) {
 }
 
 // 样式码存在性（bold=反显/加粗，code=颜色）
-const hasBold = (render(renderMarkdownLine('**b**', false).node).lastFrame() ?? '').includes('\x1b[1m');
-const codeOut = render(renderMarkdownLine('`c`', false).node).lastFrame() ?? '';
+const hasBold = (render(renderMarkdownLine('**b**', false)).lastFrame() ?? '').includes('\x1b[1m');
+const codeOut = render(renderMarkdownLine('`c`', false)).lastFrame() ?? '';
 const hasColor = codeOut !== stripAnsi(codeOut) && codeOut.length > 0;
 console.log(`${hasBold ? '✓' : '✗'} **bold** 含加粗 ANSI`);
 console.log(`${hasColor ? '✓' : '✗'} \`code\` 含颜色 ANSI`);

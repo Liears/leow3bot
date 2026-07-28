@@ -1,7 +1,9 @@
 // Skill 加载器（移植 skills.py）。扫描 SKILL.md，frontmatter 解析 name/description。
 
-import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
+import matter from 'gray-matter';
+import { MINICLAUDE_HOME } from './config.js';
 
 export interface SkillInfo {
   name: string;
@@ -12,8 +14,32 @@ export interface SkillInfo {
 
 export const SKILLS_REGISTRY = new Map<string, SkillInfo>();
 
-export function loadSkills(dir: string): void {
+// skill 开关：黑名单（~/.miniclaude/skills.json 存 disabled 列表），默认全启用
+const SKILLS_STATE_FILE = path.join(MINICLAUDE_HOME, 'skills.json');
+let disabledSkills = new Set<string>();
+
+function loadDisabled(): void {
+  disabledSkills = new Set<string>();
+  try {
+    const data = JSON.parse(readFileSync(SKILLS_STATE_FILE, 'utf-8'));
+    if (Array.isArray(data.disabled)) for (const n of data.disabled) disabledSkills.add(String(n));
+  } catch { /* 首次运行/文件不存在 → 空（全启用） */ }
+}
+
+function saveDisabled(): void {
+  try {
+    writeFileSync(SKILLS_STATE_FILE, JSON.stringify({ disabled: [...disabledSkills] }, null, 2) + '\n', 'utf-8');
+  } catch { /* noop */ }
+}
+
+export function loadSkills(dirs: string[]): void {
   SKILLS_REGISTRY.clear();
+  loadDisabled();
+  // 按顺序扫描，后扫的覆盖先扫的（项目级 > 用户级）
+  for (const dir of dirs) loadSkillsFromDir(dir);
+}
+
+function loadSkillsFromDir(dir: string): void {
   if (!existsSync(dir) || !statSync(dir).isDirectory()) return;
 
   // 格式 2：dir/SKILL.md 单文件
@@ -22,7 +48,7 @@ export function loadSkills(dir: string): void {
     loadSkillFile(directMd, path.basename(path.resolve(dir)));
   }
 
-  // 格式 1：dir/<sub>/SKILL.md
+  // 格式 1：dir/<sub>/SKILL.md（社区标准：skills/<name>/SKILL.md）
   for (const entry of readdirSync(dir).sort()) {
     if (entry === 'SKILL.md') continue;
     const md = path.join(dir, entry, 'SKILL.md');
@@ -33,44 +59,51 @@ export function loadSkills(dir: string): void {
 function loadSkillFile(md: string, fallback: string): void {
   let raw: string;
   try { raw = readFileSync(md, 'utf-8'); } catch { return; }
-  const { name, description, content } = parseSkillMd(raw);
-  const n = name || fallback;
+  const { data, content } = matter(raw); // gray-matter 解析 frontmatter（兼容社区 SKILL.md 全字段）
+  const n = (data.name as string) || fallback;
   SKILLS_REGISTRY.set(n, {
     name: n,
-    description: description || `Skill: ${n}`,
-    content,
+    description: (data.description as string) || `Skill: ${n}`,
+    content: content.trim(),
     path: md,
   });
 }
 
-function parseSkillMd(raw: string): { name: string; description: string; content: string } {
-  let name = '';
-  let description = '';
-  let content = raw;
-  const m = raw.match(/^---\s*\n(.*?)\n---\s*\n(.*)/s);
-  if (m) {
-    const fm = m[1];
-    content = m[2];
-    for (const line of fm.split('\n')) {
-      const l = line.trim();
-      if (l.startsWith('name:')) name = l.slice(5).trim().replace(/^["']|["']$/g, '');
-      else if (l.startsWith('description:')) description = l.slice(12).trim().replace(/^["']|["']$/g, '');
-    }
-  }
-  return { name, description, content: content.trim() };
-}
-
 export function getSkillListing(): string {
-  if (!SKILLS_REGISTRY.size) return '';
+  const enabled = [...SKILLS_REGISTRY.values()].filter(s => !disabledSkills.has(s.name));
+  if (!enabled.length) return '';
   const lines = ['可用 skills:'];
-  for (const [, info] of SKILLS_REGISTRY) lines.push(`  - ${info.name}: ${info.description}`);
+  for (const s of enabled) lines.push(`  - ${s.name}: ${s.description}`);
   return lines.join('\n');
 }
 
 export function getSkillPrompt(name: string, args = ''): string | null {
+  if (disabledSkills.has(name)) return null; // 已禁用
   const s = SKILLS_REGISTRY.get(name);
   if (!s) return null;
   let p = s.content;
   if (args) p = p.replace(/\$ARGUMENTS/g, args);
   return p;
+}
+
+// —— skill 开关（enable/disable + 状态查询，/skills 命令用）——
+export function enableSkill(name: string): boolean {
+  if (!disabledSkills.has(name)) return false;
+  disabledSkills.delete(name);
+  saveDisabled();
+  return true;
+}
+
+export function disableSkill(name: string): boolean {
+  if (!SKILLS_REGISTRY.has(name) || disabledSkills.has(name)) return false;
+  disabledSkills.add(name);
+  saveDisabled();
+  return true;
+}
+
+export interface SkillWithStatus { name: string; description: string; disabled: boolean }
+export function listSkillsWithStatus(): SkillWithStatus[] {
+  return [...SKILLS_REGISTRY.values()]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(s => ({ name: s.name, description: s.description, disabled: disabledSkills.has(s.name) }));
 }

@@ -29,33 +29,17 @@ const UL_RE = /^\s*([-*+])\s+(.*)/;
 const OL_RE = /^\s*(\d+)\.\s+(.*)/;
 const BQ_RE = /^>\s?(.*)/;
 
-// 渲染一行 markdown。code = 该行是否处于代码块内部（由 store 跨行维护）。
-// 返回该行节点 + 「处理完这行后的 inCode 状态」（围栏切换）。
-export function renderMarkdownLine(
-  text: string,
-  inCode: boolean,
-): { node: React.ReactElement; inCode: boolean } {
-  if (FENCE_RE.test(text)) {
-    return { node: <Text dimColor>{'─'.repeat(3)}</Text>, inCode: !inCode };
-  }
-  if (inCode) {
-    return { node: <Text dimColor>{text || ' '}</Text>, inCode: true };
-  }
+// 渲染一行 markdown。inCode = 该行是否处于代码块内部（由 store 跨行维护，调用方传入）。
+export function renderMarkdownLine(text: string, inCode: boolean): React.ReactElement {
+  if (FENCE_RE.test(text)) return <Text dimColor>{'─'.repeat(3)}</Text>;
+  if (inCode) return <Text dimColor>{text || ' '}</Text>;
   const h = HEADING_RE.exec(text);
-  if (h) {
-    return { node: <Text bold color={h[1].length <= 2 ? 'magenta' : 'blue'}>{renderInline(h[2])}</Text>, inCode: false };
-  }
+  if (h) return <Text bold color={h[1].length <= 2 ? 'magenta' : 'blue'}>{renderInline(h[2])}</Text>;
   const ul = UL_RE.exec(text);
-  if (ul) {
-    return { node: <Text><Text color="cyan">• </Text>{renderInline(ul[2])}</Text>, inCode: false };
-  }
+  if (ul) return <Text><Text color="cyan">• </Text>{renderInline(ul[2])}</Text>;
   const ol = OL_RE.exec(text);
-  if (ol) {
-    return { node: <Text><Text color="cyan">{ol[1]}. </Text>{renderInline(ol[2])}</Text>, inCode: false };
-  }
+  if (ol) return <Text><Text color="cyan">{ol[1]}. </Text>{renderInline(ol[2])}</Text>;
   const bq = BQ_RE.exec(text);
-  if (bq) {
-    return { node: <Text><Text color="gray">│ </Text>{renderInline(bq[1])}</Text>, inCode: false };
-  }
-  return { node: <Text>{renderInline(text)}</Text>, inCode: false };
+  if (bq) return <Text><Text color="gray">│ </Text>{renderInline(bq[1])}</Text>;
+  return <Text>{renderInline(text)}</Text>;
 }

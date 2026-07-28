@@ -37,12 +37,11 @@ export type StreamEvent =
 export type CommittedItem =
   | { kind: 'user'; text: string }
   | { kind: 'assistant_line'; text: string; code?: boolean }
-  | { kind: 'thinking'; text: string }
   | { kind: 'thinking_line'; text: string }
   | { kind: 'tool_start'; call: ToolCall }
   | { kind: 'tool_result'; call: ToolCall; result: unknown }
   | { kind: 'system'; text: string; tone: 'ok' | 'err' | 'warn' | 'muted' }
-  | { kind: 'logo'; logo: string[]; name: string };
+  | { kind: 'logo'; logo: string[]; name: string; info?: string[] };
 
 // StatusBar 常驻的启动元信息（model / 工具数 / cwd 等）
 export interface Meta { model: string; nTools: number; nSkills: number; cwd: string }

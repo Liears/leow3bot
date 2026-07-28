@@ -6,6 +6,7 @@ import {
   setError, getState, toggleCtx, togglePerf, toggleThinking,
 } from './store.js';
 import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS } from './config.js';
+import { getSkillListing } from './skills.js';
 import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
 import { TOOLS_SCHEMAS } from './tools.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
@@ -24,6 +25,16 @@ export function clearMessages(): void { messages.length = 0; }
 export function setMessages(m: MessageParam[]): void { messages.length = 0; messages.push(...m); }
 export function setSystem(s: string): void { system = s; }
 export function getSystem(): string { return system; }
+
+// 构建 system prompt（SYSTEM_PROMPT + skill listing + web 工具指引）。
+// enable/disable skill 后调 setSystem(buildSystem()) 即时重算 listing。
+const WEB_TOOLS_GUIDE =
+  '可用 web 工具：web_search（联网搜索最新信息，返回标题/URL/摘要）、web_fetch（读取指定 URL 的网页正文）。\n' +
+  '需要实时信息、最新数据、或用户问及网页内容时使用；回答末尾用 markdown 链接引用来源。';
+export function buildSystem(): string {
+  const skillListing = getSkillListing();
+  return SYSTEM_PROMPT + (skillListing ? '\n\n' + skillListing : '') + '\n\n' + WEB_TOOLS_GUIDE;
+}
 
 function appendUserMessage(text: string): void {
   // 角色合并（对齐 Python _append_user_message）
@@ -85,6 +96,13 @@ export async function handleSubmit(text: string, images: PastedImg[], exit: () =
 // 多轮工具循环（对齐 Python process_user_turn）
 async function runTurn(ref: { current: AbortController | null }): Promise<void> {
   let round = 0;
+  // turn 累加：整个 turn（含多次工具调用 LLM）的总 usage/timing，而非单次 LLM。
+  // input/cache 取最后一次（当前 context），output/decode 累加，ttft 取首次（用户感知首 token）。
+  let turnOutput = 0;
+  let turnDecode = 0;
+  let firstTtft: number | null = null;
+  let lastUsage: Usage | null = null;
+  const turnStart = performance.now();
   while (true) {
     round++;
     if (round > MAX_TOOL_ROUNDS) {
@@ -107,11 +125,26 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
         } else if (ev.type === 'thinking') {
           appendThinking(ev.text); // 内部按 showThinking 决定是否进 scrollback
         } else {
-          // done / tool_call / interrupted：思考 commit 进 scrollback + flush 未完成段 + API 历史。
+          // done / tool_call / interrupted：思考 commit + flush + 累加 turn 指标。
           commitThinking();
           flushText();
           resetMarkdown();
-          setUsageTiming(ev.usage, ev.timing);
+          if (ev.usage) {
+            turnOutput += (ev.usage.output_tokens ?? 0);
+            lastUsage = ev.usage;
+          }
+          if (ev.timing) {
+            if (firstTtft === null && ev.timing.ttft != null) firstTtft = ev.timing.ttft;
+            turnDecode += (ev.timing.decode_time ?? 0);
+          }
+          // turn 视图：input/cache 取最后（当前 context），output 累加；ttft 首次，decode 累加，total 整个 turn
+          const turnUsage: Usage | null = lastUsage ? { ...lastUsage, output_tokens: turnOutput } : ev.usage;
+          const turnTiming: Timing = {
+            ttft: firstTtft,
+            decode_time: turnDecode > 0 ? turnDecode : null,
+            total: performance.now() - turnStart,
+          };
+          setUsageTiming(turnUsage, turnTiming);
           messages.push(ev.assistant_msg);
           outcome = ev;
           break;

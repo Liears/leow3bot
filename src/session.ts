@@ -1,13 +1,27 @@
 // 会话持久化（移植 session.py）。~/.miniclaude/sessions/，current_session.json 覆盖式自动保存。
 
-import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { MINICLAUDE_HOME } from './config.js';
 import type { ContentBlock, MessageContent, MessageParam } from './types.js';
 
-const SESSION_DIR = path.join(homedir(), '.miniclaude', 'sessions');
+const SESSION_DIR = path.join(MINICLAUDE_HOME, 'sessions');
 try { mkdirSync(SESSION_DIR, { recursive: true }); } catch { /* noop */ }
-const CURRENT_FILE = path.join(SESSION_DIR, 'current_session.json');
+
+// 项目隔离：每个项目（git root，无 git 则 cwd）独立一份 autosave，互不串。
+function findProjectRoot(): string {
+  try {
+    const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf-8' });
+    if (r.status === 0 && r.stdout) return r.stdout.trim();
+  } catch { /* noop */ }
+  return process.cwd();
+}
+export const PROJECT_ROOT = findProjectRoot();
+const PROJECT_HASH = createHash('sha256').update(PROJECT_ROOT).digest('hex').slice(0, 12);
+const CURRENT_FILE = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
+const CURRENT_PREFIX = 'current_';
 const MAX_SESSIONS = 50;
 
 export interface SessionMeta {
@@ -16,7 +30,9 @@ export interface SessionMeta {
   timestamp: string;
   message_count: number;
   filepath: string;
-  is_current: boolean;
+  is_current: boolean;         // 当前项目的 autosave 文件
+  projectRoot: string;         // 会话所属项目
+  is_current_project: boolean; // 是否属于当前项目
 }
 
 function timestamp(): string {
@@ -81,6 +97,7 @@ export function autosaveSession(messages: MessageParam[]): void {
     version: 1,
     timestamp: timestamp(),
     name: genName(messages),
+    projectRoot: PROJECT_ROOT,
     message_count: messages.length,
     messages: compressMessages(messages),
   };
@@ -95,7 +112,7 @@ export function saveSession(messages: MessageParam[], name?: string): string {
   if (!messages.length) return '';
   const ts = timestamp();
   const n = name ?? genName(messages);
-  const data = { version: 1, timestamp: ts, name: n, message_count: messages.length, messages: compressMessages(messages) };
+  const data = { version: 1, timestamp: ts, name: n, projectRoot: PROJECT_ROOT, message_count: messages.length, messages: compressMessages(messages) };
   const fp = path.join(SESSION_DIR, `${ts}.json`);
   try { writeFileSync(fp, JSON.stringify(data, null, 2), 'utf-8'); } catch { return ''; }
   cleanupOldSessions();
@@ -119,9 +136,13 @@ export function listSessions(limit = 10): SessionMeta[] {
     const full = path.join(SESSION_DIR, f);
     try {
       const data = JSON.parse(readFileSync(full, 'utf-8'));
+      const pr = data.projectRoot ?? '';
       sessions.push({
         filename: f, name: data.name ?? '未命名', timestamp: data.timestamp ?? '',
-        message_count: data.message_count ?? 0, filepath: full, is_current: f === 'current_session.json',
+        message_count: data.message_count ?? 0, filepath: full,
+        is_current: f === `current_${PROJECT_HASH}.json`,
+        projectRoot: pr,
+        is_current_project: pr === PROJECT_ROOT,
       });
     } catch { /* skip */ }
   }
@@ -131,7 +152,7 @@ export function listSessions(limit = 10): SessionMeta[] {
 
 function cleanupOldSessions(): void {
   const snaps = readdirSync(SESSION_DIR)
-    .filter(f => f.endsWith('.json') && f !== 'current_session.json')
+    .filter(f => f.endsWith('.json') && !f.startsWith(CURRENT_PREFIX))
     .map(f => path.join(SESSION_DIR, f));
   if (snaps.length <= MAX_SESSIONS) return;
   snaps.sort((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs);

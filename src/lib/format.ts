@@ -11,8 +11,8 @@ export function fmtDur(s: number | null | undefined): string {
   return s < 1 ? `${Math.round(s * 1000)}ms` : `${s.toFixed(2)}s`;
 }
 
-// 默认渐变色带（紫 → 粉 → 琥珀），logo / 名称逐字符着色用。
-export const GRADIENT_STOPS = ['#7C3AED', '#A855F7', '#EC4899', '#F59E0B'];
+// 默认渐变色带（深青 → 浅青，同色系冷色，呼应主色 #06B6D4），logo / 名称逐字符着色用。
+export const GRADIENT_STOPS = ['#0891B2', '#22D3EE'];
 
 // 在色带上按 t∈[0,1] 线性插值出一个 hex 颜色（ink <Text color> 接受 '#rrggbb'）。
 export function gradientHex(t: number, stops: string[] = GRADIENT_STOPS): string {

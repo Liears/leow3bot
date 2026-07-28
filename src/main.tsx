@@ -5,15 +5,14 @@ import React from 'react';
 import { render } from 'ink';
 import App from './components/App.js';
 import { commit, setMeta } from './store.js';
-import { loadSkills, getSkillListing, SKILLS_REGISTRY } from './skills.js';
-import { setSystem } from './agent.js';
+import { loadSkills, SKILLS_REGISTRY } from './skills.js';
+import { setSystem, buildSystem } from './agent.js';
 import { getWelcomeItems } from './commands.js';
 import { TOOLS_REGISTRY } from './tools.js';
-import { SKILL_DIR, SYSTEM_PROMPT, MODEL } from './config.js';
+import { SKILL_DIRS, MODEL } from './config.js';
 
-loadSkills(SKILL_DIR);
-const skillListing = getSkillListing();
-setSystem(SYSTEM_PROMPT + (skillListing ? '\n\n' + skillListing : ''));
+loadSkills(SKILL_DIRS);
+setSystem(buildSystem());
 
 setMeta({
   model: MODEL,

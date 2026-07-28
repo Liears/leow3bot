@@ -4,6 +4,8 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 
 interface UserConfig {
   apiBaseUrl?: string;
@@ -12,14 +14,28 @@ interface UserConfig {
   maxTokens?: number;
   contextWindow?: number;
   temperature?: number;
+  // web 工具（智谱原生 web_search / reader）
+  webSearchEngine?: string;
+  webSearchContentSize?: string;
+  webSearchCount?: number;
+  webResultMaxChars?: number;
+  webApiKey?: string;
+  // thinking（深度思考）
+  thinkingBudget?: number;
 }
 
 function loadConfig(): UserConfig {
+  // 1. 用户级 ~/.miniclaude/config.json（标准位置，开发/安装都改这）
+  //    注意：直接用 homedir() 拼，不能用 MINICLAUDE_HOME 常量（它在后面才定义，此处处于 TDZ）
   try {
-    return JSON.parse(readFileSync(path.join(import.meta.dirname ?? '.', '..', 'config.json'), 'utf-8'));
-  } catch {
-    return {}; // config.json 不存在时用下面的默认值
-  }
+    return JSON.parse(readFileSync(path.join(homedir(), '.miniclaude', 'config.json'), 'utf-8'));
+  } catch {}
+  // 2. 项目 config.json（fallback：兼容旧开发态/未迁移场景）
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    return JSON.parse(readFileSync(path.join(here, '..', 'config.json'), 'utf-8'));
+  } catch {}
+  return {}; // 都不存在时用下面的默认值
 }
 
 const cfg = loadConfig();
@@ -32,8 +48,23 @@ export const MAX_TOKENS = cfg.maxTokens ?? 192000;
 export const CONTEXT_WINDOW = cfg.contextWindow ?? 192000;
 export const TEMPERATURE = cfg.temperature ?? 0.7;
 
+// thinking（深度思考，默认常开）—— glm-5.x 经 Anthropic 兼容端点需显式传 thinking 参数才会发思考流
+export const THINKING_BUDGET = cfg.thinkingBudget ?? 5000;
+
+// —— web 工具配置（智谱原生 web_search / reader 端点，与 apiKey 同平台）——
+export const WEB_SEARCH_ENGINE = cfg.webSearchEngine ?? 'search_std';
+export const WEB_SEARCH_CONTENT_SIZE = cfg.webSearchContentSize ?? 'medium';
+export const WEB_SEARCH_COUNT = cfg.webSearchCount ?? 10;
+export const WEB_RESULT_MAX_CHARS = cfg.webResultMaxChars ?? 30000;
+// 智谱 web 工具固定端点（与 API_BASE_URL 的 /api/anthropic 不耦合）
+export const WEB_SEARCH_URL = 'https://open.bigmodel.cn/api/paas/v4/web_search';
+
 export function getApiKey(): string {
   return API_KEY;
+}
+// web 工具 key：默认复用 apiKey（智谱同 key 零配置），可在 config.json 用 webApiKey 覆盖
+export function getWebApiKey(): string {
+  return cfg.webApiKey || API_KEY;
 }
 
 // —— 内部常量（一般不需改）——
@@ -49,7 +80,18 @@ export const IMAGE_MAX_WIDTH = 2000;
 export const IMAGE_MAX_HEIGHT = 2000;
 export const IMAGE_TARGET_RAW_SIZE = 3_750_000;
 
-export const SKILL_DIR = 'skill';
+// miniclaude 用户级 home：config / sessions / skills 都在这下面
+export const MINICLAUDE_HOME = path.join(homedir(), '.miniclaude');
+
+// skill 扫描目录（数组顺序=优先级，后者覆盖前者同名 skill）：
+//   1) ~/.claude/skills      —— Claude 用户级标准（`npx skills add` 默认装这）
+//   2) ~/.miniclaude/skills  —— miniclaude 自己的 home
+//   3) ./.claude/skills      —— 项目级（覆盖用户级）
+export const SKILL_DIRS = [
+  path.join(homedir(), '.claude', 'skills'),
+  path.join(MINICLAUDE_HOME, 'skills'),
+  path.join(process.cwd(), '.claude', 'skills'),
+];
 export const SYSTEM_PROMPT = '';
 
 // CC 风格符号 + 主色
@@ -57,4 +99,4 @@ export const SYM_USER = '❯';
 export const SYM_TOOL = '⏺';
 export const SYM_RESULT = '⎿';
 export const SYM_THINK = '✻';
-export const ACCENT = '#D97757';
+export const ACCENT = '#06B6D4';

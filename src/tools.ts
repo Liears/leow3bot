@@ -9,6 +9,7 @@ import sharp from 'sharp';
 import { IMAGE_EXTENSIONS, IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, IMAGE_TARGET_RAW_SIZE } from './config.js';
 import { getSkillPrompt, SKILLS_REGISTRY } from './skills.js';
 import { commit, setPhase, setAskResolver } from './store.js';
+import { searchWeb, readUrl } from './websearch.js';
 
 const execAsync = promisify(exec);
 
@@ -205,6 +206,48 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
       name: 'ask',
       description: '向用户提问，等待用户回复后继续。遇到不确定的问题、需要用户确认或选择时使用。',
       input_schema: { type: 'object', properties: { question: { type: 'string', description: '要问用户的问题' } }, required: ['question'] },
+    },
+  },
+  web_search: {
+    function: (a) =>
+      searchWeb(a.query as string, {
+        count: a.count as number | undefined,
+        search_engine: a.search_engine as string | undefined,
+        content_size: a.content_size as string | undefined,
+        recency: a.recency as string | undefined,
+        domain_filter: a.domain_filter as string | undefined,
+      }),
+    concurrencySafe: true,
+    schema: {
+      name: 'web_search',
+      description: '联网搜索（智谱 web_search）。返回网页标题、URL、摘要、来源。需要最新信息、时事、或知识截止之后的内容时使用。回答末尾必须用 markdown 链接引用来源。',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '搜索内容（≤70 字符）' },
+          count: { type: 'integer', description: '返回条数（1-50，默认 10）' },
+          search_engine: { type: 'string', enum: ['search_std', 'search_pro', 'search_pro_sogou', 'search_pro_quark'], description: '搜索引擎（默认 search_std；查中文资讯可用 search_pro_sogou/search_pro_quark）' },
+          content_size: { type: 'string', enum: ['medium', 'high'], description: 'medium=摘要(省token)，high=详细（默认 medium）' },
+          recency: { type: 'string', enum: ['noLimit', 'oneDay', 'oneWeek', 'oneMonth', 'oneYear'], description: '时间范围过滤（默认 noLimit）' },
+          domain_filter: { type: 'string', description: '白名单域名，仅返回指定站点结果' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  web_fetch: {
+    function: (a) => readUrl(a.url as string),
+    concurrencySafe: true,
+    schema: {
+      name: 'web_fetch',
+      description: '抓取指定 URL 的网页内容（纯客户端 fetch + HTML→markdown，返回原始正文，不做摘要）。已知具体网址、需读取其内容时使用。跨域重定向会提示用新 URL 重调。',
+      input_schema: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '要读取的网页 URL（http/https）' },
+        },
+        required: ['url'],
+      },
     },
   },
 };

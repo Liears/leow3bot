@@ -15,11 +15,7 @@ export default function MessageList({ item }: { item: CommittedItem }) {
         </Box>
       );
     case 'assistant_line':
-      return <Box>{renderMarkdownLine(item.text, item.code ?? false).node}</Box>;
-    case 'thinking':
-      return (
-        <Box><Text dimColor italic>{SYM_THINK} {item.text}</Text></Box>
-      );
+      return <Box>{renderMarkdownLine(item.text, item.code ?? false)}</Box>;
     case 'thinking_line':
       return (
         <Box flexDirection="column">
@@ -51,8 +47,9 @@ export default function MessageList({ item }: { item: CommittedItem }) {
       );
     }
     case 'logo': {
-      // logo block 与名称横向并排；按「列位置」着色 → 整块水平彩虹，名称逐字符渐变。
+      // logo + 右侧多行信息横向并排；logo 逐字符渐变，右侧首行（名称）渐变，其余 dimColor。
       const maxW = Math.max(...item.logo.map(l => l.length));
+      const info = item.info ?? [item.name];
       return (
         <Box alignItems="center" gap={2}>
           <Box flexDirection="column">
@@ -64,11 +61,17 @@ export default function MessageList({ item }: { item: CommittedItem }) {
               </Text>
             ))}
           </Box>
-          <Text bold>
-            {item.name.split('').map((ch, ni) => (
-              <Text key={ni} color={gradientHex(ni / Math.max(1, item.name.length - 1))}>{ch}</Text>
+          <Box flexDirection="column">
+            {info.map((line, li) => (
+              <Text key={li} bold={li === 0} dimColor={li > 0}>
+                {li === 0
+                  ? line.split('').map((ch, ci) => (
+                      <Text key={ci} color={gradientHex(ci / Math.max(1, line.length - 1))}>{ch}</Text>
+                    ))
+                  : line}
+              </Text>
             ))}
-          </Text>
+          </Box>
         </Box>
       );
     }

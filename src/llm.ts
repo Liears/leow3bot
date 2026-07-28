@@ -1,9 +1,9 @@
-// LLM 流式调用：@anthropic-ai/sdk 配 dashscope（baseURL + authToken + signal）
-// 对齐 Python llm.py：自己累积 content_blocks（dashscope 与 SDK currentMessage 累积不兼容），
-// 组装 assistant_msg；yield 5 事件 + timing。SDK 仅用于 HTTP/SSE 传输 + abort。
+// LLM 流式调用：@anthropic-ai/sdk 配 Anthropic 兼容端点（baseURL + authToken + signal）
+// 自己累积 content_blocks（兼容端点与 SDK currentMessage 累积不一致），组装 assistant_msg；
+// yield 5 事件 + timing。SDK 仅用于 HTTP/SSE 传输 + abort。
 
 import Anthropic from '@anthropic-ai/sdk';
-import { API_BASE_URL, MODEL, MAX_TOKENS, TEMPERATURE, TOP_P, TOP_K, API_TIMEOUT, getApiKey } from './config.js';
+import { API_BASE_URL, MODEL, MAX_TOKENS, TEMPERATURE, TOP_P, TOP_K, API_TIMEOUT, THINKING_BUDGET, getApiKey } from './config.js';
 import type { MessageParam, Usage, Timing, ToolCall, StreamEvent, ContentBlock } from './types.js';
 
 let _client: Anthropic | null = null;
@@ -49,6 +49,7 @@ export async function* callLLMStream(
       temperature: TEMPERATURE,
       ...(TOP_P != null ? { top_p: TOP_P } : {}),
       ...(TOP_K != null ? { top_k: TOP_K } : {}),
+      thinking: { type: 'enabled' as const, budget_tokens: THINKING_BUDGET },
       system,
       messages: messages as never,
       tools: tools as never,
@@ -73,17 +74,25 @@ export async function* callLLMStream(
         });
       } else if (type === 'content_block_delta') {
         const idx = (event as { index: number }).index;
-        const d = (event as { delta: { type: string; thinking?: string; text?: string; partial_json?: string } }).delta;
+        const d = (event as { delta: { type: string; thinking?: string; text?: string; partial_json?: string; reasoning_content?: string } }).delta;
         const block = contentBlocks.get(idx);
-        if (d.type === 'thinking_delta' || d.type === 'text_delta' || d.type === 'input_json_delta') {
+        // glm-5.2 兼容层常发空 thinking_delta（reasoning_content 转 thinking）；
+        // 只对有内容的 delta 计时，否则空 delta 会污染 TTFT/TPOT。
+        // 字段兜底：thinking（标准 Anthropic）?? reasoning_content（部分兼容层未转字段名）。
+        const thinkChunk = d.thinking ?? d.reasoning_content;
+        const hasContent =
+          (d.type === 'thinking_delta' && thinkChunk) ||
+          (d.type === 'text_delta' && d.text) ||
+          (d.type === 'input_json_delta' && d.partial_json);
+        if (hasContent) {
           const now = performance.now();
           if (tFirst === null) tFirst = now;
           tLast = now;
         }
         if (block) {
-          if (d.type === 'thinking_delta' && d.thinking) {
-            block.thinking += d.thinking;
-            yield { type: 'thinking', text: d.thinking };
+          if (d.type === 'thinking_delta' && thinkChunk) {
+            block.thinking += thinkChunk;
+            yield { type: 'thinking', text: thinkChunk };
           } else if (d.type === 'text_delta' && d.text) {
             block.text += d.text;
             yield { type: 'text', text: d.text };
@@ -144,7 +153,7 @@ export async function* callLLMStream(
 }
 
 // countTokens（beta，/v1/messages/count_tokens）：用模型 tokenizer 精确计数，供 /context 明细用。
-// dashscope 若不支持该 beta 端点会抛错，catch 返回 null。
+// 端点若不支持该 beta 会抛错，catch 返回 null。
 export async function countTokens(system: string, messages: MessageParam[], tools: unknown[]): Promise<number | null> {
   try {
     const r = await getClient().beta.messages.countTokens({

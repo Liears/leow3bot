@@ -4,7 +4,7 @@
 import { useSyncExternalStore } from 'react';
 import type { CommittedItem, Usage, Timing, Meta } from './types.js';
 
-export type Phase = 'idle' | 'thinking' | 'streaming' | 'tool_running' | 'ask_pending';
+export type Phase = 'idle' | 'thinking' | 'streaming' | 'tool_running' | 'ask_pending' | 'skills_picker';
 
 export interface State {
   committed: CommittedItem[];      // 只增 → <Static> → 原生 scrollback
@@ -63,10 +63,16 @@ export const appendText = (delta: string) => set(s => {
     phase: 'streaming' as const,
   };
 });
-// 思考累积到动态区固定窗口显示（只保留最新几行滚动，不逐行 commit 进 scrollback 铺满）。
+// 思考逐行 commit 进 scrollback（像 appendText），不占动态区高度——
+// 避免 ThinkingWindow 撑高动态区导致 spinner/Input/StatusBar 跳动或空白。
 export const appendThinking = (delta: string) => set(s => {
   if (!s.showThinking) return {};
-  return { streamingThinking: s.streamingThinking + delta };
+  const lines = (s.streamingThinking + delta).split('\n');
+  const pending = lines.pop() ?? '';
+  const complete = lines;
+  if (!complete.length) return { streamingThinking: pending };
+  const items = complete.map(t => ({ kind: 'thinking_line' as const, text: t }));
+  return { committed: [...s.committed, ...items], streamingThinking: pending };
 });
 // flush 未完成段为最后一行（done/tool_call/interrupted 前调用）。原子，空则 no-op。
 export const flushText = () => set(s => {
@@ -88,8 +94,6 @@ export const setUsageTiming = (usage: Usage | null, timing: Timing | null) => se
 export const toggleCtx = () => set(s => ({ showCtx: !s.showCtx }));
 export const togglePerf = () => set(s => ({ showPerf: !s.showPerf }));
 export const toggleThinking = () => set(s => ({ showThinking: !s.showThinking }));
-export const setCtx = (v: boolean) => set({ showCtx: v });
-export const setPerf = (v: boolean) => set({ showPerf: v });
 export const setAskResolver = (r: ((s: string) => void) | null) => set({ askResolver: r });
 export const setMeta = (m: Meta) => set({ meta: m });
 export const setError = (e: string | null) => set({ error: e });

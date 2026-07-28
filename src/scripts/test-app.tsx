@@ -4,9 +4,10 @@ import stripAnsi from 'strip-ansi';
 import { commit, setMeta } from '../store.js';
 import { getWelcomeItems } from '../commands.js';
 import App from '../components/App.js';
+import { MODEL } from '../config.js';
 
 for (const item of getWelcomeItems()) commit(item);
-setMeta({ model: 'qwen3.7-plus', nTools: 6, nSkills: 0, cwd: '/Users/test/MiniClaude' });
+setMeta({ model: MODEL, nTools: 8, nSkills: 0, cwd: '/Users/test/MiniClaude' });
 
 // 模拟一段流式 markdown 回复（assistant_line）
 commit({ kind: 'assistant_line', text: '# 标题' });
@@ -25,7 +26,7 @@ console.log(out);
 console.log('--- end ---');
 
 const hasName = out.includes('MiniClaude');
-const hasModel = out.includes('qwen3.7-plus');
+const hasModel = out.includes(MODEL);
 const hasPrompt = out.includes('❯'); // 输入提示符
 // markdown 已渲染：字面语法被消费（# 标题→标题，** **→加粗，` `→代码）
 const noLiteralHash = !out.includes('# 标题');

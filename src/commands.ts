@@ -1,22 +1,20 @@
 // 斜杠命令系统（移植 commands.py）+ welcome 横幅/logo。
 
+import { homedir } from 'node:os';
 import { MODEL } from './config.js';
-import { SKILLS_REGISTRY } from './skills.js';
 import { TOOLS_SCHEMAS } from './tools.js';
 import { getSystem } from './agent.js';
-import { getState } from './store.js';
+import { getState, setPhase } from './store.js';
 import { countTokens } from './llm.js';
-import { saveSession, loadSession, listSessions } from './session.js';
+import { saveSession, loadSession, listSessions, PROJECT_ROOT } from './session.js';
 import { compactMediaMessages, compactOldToolResults } from './compaction.js';
 import type { CommittedItem, ContentBlock, MessageParam } from './types.js';
 
-// MiniClaude 实心 logo（MC）：左 M（7 列）+ 间隔 + 右 C（6 列）。
+// logo：「眼睛」图案（AI 凝视/观察），实心眼眶 + 中心 ◉ 瞳孔
 export const LOGO = [
-  '███  ██   ██████',
-  '████ ██   ██',
-  '██ ████   ██',
-  '██  ███   ██',
-  '██   ██   ██████',
+  '█████',
+  '█ ◉ █',
+  '█████',
 ];
 
 export const COMMANDS = [
@@ -57,7 +55,7 @@ function textOf(content: unknown): string {
   return String(content ?? '');
 }
 
-export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): Promise<CmdResult> {
+export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): Promise<CmdResult | undefined> {
   switch (cmd) {
     case 'q':
     case 'quit':
@@ -74,7 +72,7 @@ export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): P
       const withTools = await countTokens(sys, [], TOOLS_SCHEMAS);
       const total = await countTokens(sys, msgs, TOOLS_SCHEMAS);
       if (base == null || withTools == null || total == null) {
-        return { output: 'countTokens 不可用（dashscope 可能不支持 /v1/messages/count_tokens beta 端点）', tone: 'err' };
+        return { output: 'countTokens 不可用（当前端点可能不支持 /v1/messages/count_tokens beta）', tone: 'err' };
       }
       const lines = [
         `context 状态栏: ${!ctx.showCtx ? '开启' : '关闭'}`,
@@ -102,14 +100,11 @@ export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): P
     case 'model':
       return { output: '当前模型: ' + MODEL, tone: 'muted' };
     case 'tools':
-      return { output: '可用工具: bash read write edit skill ask', tone: 'muted' };
-    case 'skills': {
-      if (!SKILLS_REGISTRY.size) return { output: '没有加载任何 skill', tone: 'muted' };
-      return {
-        output: '已加载 skills:\n' + [...SKILLS_REGISTRY.values()].map(s => `  ${s.name}: ${s.description}`).join('\n'),
-        tone: 'muted',
-      };
-    }
+      return { output: '可用工具: ' + TOOLS_SCHEMAS.map(s => s.name).join(' '), tone: 'muted' };
+    case 'skills':
+      // 进入交互式 skill picker（↑↓ 选择 · Tab 切换 · Enter 完成）
+      setPhase('skills_picker');
+      return;
     case 'history': {
       const ms = ctx.getMessages();
       if (!ms.length) return { output: '对话历史为空', tone: 'muted' };
@@ -135,8 +130,13 @@ export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): P
     case 'sessions': {
       const list = listSessions(20);
       if (!list.length) return { output: '没有已保存的会话', tone: 'muted' };
-      const lines = list.map((s, i) => `  ${i + 1}. ${s.filename}${s.is_current ? ' (当前)' : ''} — ${s.name} (${s.message_count} 条)`);
-      return { output: '已保存会话:\n' + lines.join('\n'), tone: 'muted' };
+      const shortPr = (p: string) => (p && homedir() && p.startsWith(homedir()) ? '~' + p.slice(homedir().length) : p || '?');
+      const lines = list.map((s, i) => {
+        const tag = s.is_current ? ' (当前自动保存)' : '';
+        const proj = s.is_current_project ? '' : ` [${shortPr(s.projectRoot)}]`;
+        return `  ${i + 1}. ${s.filename}${tag}${proj} — ${s.name} (${s.message_count} 条)`;
+      });
+      return { output: `已保存会话（当前项目 ${shortPr(PROJECT_ROOT)}）:\n` + lines.join('\n'), tone: 'muted' };
     }
     case 'load': {
       if (!args.length) {
@@ -163,7 +163,19 @@ export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): P
   }
 }
 
-// welcome：仅 logo + 名称横向并排（model/tools/cwd 移至 StatusBar）。
+// welcome：logo + 右侧 3 行信息（名称版本 / 模型·平台 / 目录），复刻 CC 风格。
 export function getWelcomeItems(): CommittedItem[] {
-  return [{ kind: 'logo', logo: LOGO, name: 'MiniClaude' }];
+  const home = homedir();
+  const cwd = process.cwd();
+  const cwdShort = home && cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+  return [{
+    kind: 'logo',
+    logo: LOGO,
+    name: 'MiniClaude',
+    info: [
+      'MiniClaude v0.1.0',
+      `${MODEL} · 智谱 BigModel`,
+      cwdShort,
+    ],
+  }];
 }
