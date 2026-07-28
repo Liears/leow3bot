@@ -7,7 +7,7 @@ import App from '../components/App.js';
 import { MODEL } from '../config.js';
 
 for (const item of getWelcomeItems()) commit(item);
-setMeta({ model: MODEL, nTools: 8, nSkills: 0, cwd: '/Users/test/MiniClaude' });
+setMeta({ model: MODEL, nTools: 8, nSkills: 0, cwd: '/Users/test/Leow3Bot' });
 
 // 模拟一段流式 markdown 回复（assistant_line）
 commit({ kind: 'assistant_line', text: '# 标题' });
@@ -25,7 +25,7 @@ console.log('--- App 渲染输出 ---');
 console.log(out);
 console.log('--- end ---');
 
-const hasName = out.includes('MiniClaude');
+const hasName = out.includes('Leow3Bot');
 const hasModel = out.includes(MODEL);
 const hasPrompt = out.includes('❯'); // 输入提示符
 // markdown 已渲染：字面语法被消费（# 标题→标题，** **→加粗，` `→代码）
@@ -34,7 +34,7 @@ const noLiteralStar = !out.includes('**加粗**');
 const noLiteralBack = !out.includes('`代码`');
 const hasBullet = stripAnsi(out).includes('• 列表项');
 const ok = hasName && hasModel && hasPrompt && noLiteralHash && noLiteralStar && noLiteralBack && hasBullet;
-console.log(`\n${hasName ? '✓' : '✗'} 含名称 MiniClaude`);
+console.log(`\n${hasName ? '✓' : '✗'} 含名称 Leow3Bot`);
 console.log(`${hasModel ? '✓' : '✗'} 状态栏含 model`);
 console.log(`${hasPrompt ? '✓' : '✗'} 含输入提示符 ❯`);
 console.log(`${noLiteralHash ? '✓' : '✗'} 标题 # 已渲染（无字面 #）`);

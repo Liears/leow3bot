@@ -1,13 +1,13 @@
-// 会话持久化（移植 session.py）。~/.miniclaude/sessions/，current_session.json 覆盖式自动保存。
+// 会话持久化（移植 session.py）。~/.leow3bot/sessions/，current_session.json 覆盖式自动保存。
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
-import { MINICLAUDE_HOME } from './config.js';
+import { LEOW3BOT_HOME } from './config.js';
 import type { ContentBlock, MessageContent, MessageParam } from './types.js';
 
-const SESSION_DIR = path.join(MINICLAUDE_HOME, 'sessions');
+const SESSION_DIR = path.join(LEOW3BOT_HOME, 'sessions');
 try { mkdirSync(SESSION_DIR, { recursive: true }); } catch { /* noop */ }
 
 // 项目隔离：每个项目（git root，无 git 则 cwd）独立一份 autosave，互不串。

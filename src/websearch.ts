@@ -198,7 +198,7 @@ export async function readUrl(url: string): Promise<WebFetchResult> {
         signal: ctrl.signal,
         redirect: 'manual',
         headers: {
-          'User-Agent': 'MiniClaude/1.0 (+web_fetch)',
+          'User-Agent': 'Leow3Bot/1.0 (+web_fetch)',
           Accept: 'text/html,application/xhtml+xml,text/*,application/json,application/xml,*/*',
         },
       });

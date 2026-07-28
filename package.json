@@ -1,11 +1,11 @@
 {
-  "name": "@yuanhechen/miniclaude",
+  "name": "@yuanhechen/leow3bot",
   "version": "0.1.0",
   "description": "DeepAnalyze — CLI AI agent (TypeScript + ink)",
   "type": "module",
   "private": true,
   "bin": {
-    "miniclaude": "./dist/main.mjs"
+    "leow3bot": "./dist/main.mjs"
   },
   "files": [
     "dist",

@@ -171,9 +171,9 @@ export function getWelcomeItems(): CommittedItem[] {
   return [{
     kind: 'logo',
     logo: LOGO,
-    name: 'MiniClaude',
+    name: 'Leow3Bot',
     info: [
-      'MiniClaude v0.1.0',
+      'Leow3Bot v0.1.0',
       `${MODEL} · 智谱 BigModel`,
       cwdShort,
     ],

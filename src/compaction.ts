@@ -5,7 +5,7 @@ import path from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import type { ContentBlock, MessageParam } from './types.js';
 
-const PERSIST_DIR = path.join(tmpdir(), 'miniclaude_analysis');
+const PERSIST_DIR = path.join(tmpdir(), 'leow3bot_analysis');
 try { mkdirSync(PERSIST_DIR, { recursive: true }); } catch { /* noop */ }
 
 function persistAnalysis(filename: string, analysis: string): string {

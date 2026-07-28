@@ -4,7 +4,7 @@ This file provides guidance when working with code in this repository.
 
 ## Project Overview
 
-DeepAnalyze（miniclaude）：CLI AI agent，**TypeScript + ink**（对标 Claude Code 的终端渲染）。连接智谱 BigModel 的 Anthropic 兼容端点（glm-5.x），支持工具调用、流式输出、skill、会话存储、剪贴板图片粘贴、联网搜索/阅读。中文 UI / 中文 prompt。
+DeepAnalyze（leow3bot）：CLI AI agent，**TypeScript + ink**（对标 Claude Code 的终端渲染）。连接智谱 BigModel 的 Anthropic 兼容端点（glm-5.x），支持工具调用、流式输出、skill、会话存储、剪贴板图片粘贴、联网搜索/阅读。中文 UI / 中文 prompt。
 
 **为什么 ink**：为同时实现「流式逐字 + 底部状态栏常驻 + 鼠标滚轮翻原生 scrollback 历史」三者兼得 —— 这正是 Claude Code 用 ink 渲染做到的。靠 ink 的 `<Static>`（已完成消息进原生 scrollback）+ 动态区每帧 diff（当前流式 + 状态栏 + 输入）。
 
@@ -12,10 +12,10 @@ DeepAnalyze（miniclaude）：CLI AI agent，**TypeScript + ink**（对标 Claud
 
 ### 全局安装（用户）
 ```bash
-npm install -g @yuanhechen/miniclaude
-miniclaude            # 任意目录启动
+npm install -g @yuanhechen/leow3bot
+leow3bot            # 任意目录启动
 ```
-配置：复制 `config.example.json` → `~/.miniclaude/config.json`，填 `apiKey`（智谱 BigModel key）。
+配置：复制 `config.example.json` → `~/.leow3bot/config.json`，填 `apiKey`（智谱 BigModel key）。
 
 ### 开发态
 ```bash
@@ -30,7 +30,7 @@ npm install -g .      # 本地全局安装测试
 
 ## 配置（config.json）
 
-开发态读项目根 `config.json`；全局安装态读 `~/.miniclaude/config.json`（`config.ts` 的 `loadConfig` 按此顺序 fallback）。字段见 `config.example.json`：
+开发态读项目根 `config.json`；全局安装态读 `~/.leow3bot/config.json`（`config.ts` 的 `loadConfig` 按此顺序 fallback）。字段见 `config.example.json`：
 
 - `apiBaseUrl`（默认 `https://open.bigmodel.cn/api/anthropic`）
 - `apiKey`（智谱 BigModel key，必须）
@@ -41,7 +41,7 @@ npm install -g .      # 本地全局安装测试
 ## Architecture（src/）
 
 ### 核心模块
-- **config.ts** — 配置常量 + `loadConfig`（项目 config.json → `~/.miniclaude/config.json`）+ `getApiKey()`/`getWebApiKey()` + `MINICLAUDE_HOME` + `SKILL_DIRS` + 符号/主色 `#D97757`。
+- **config.ts** — 配置常量 + `loadConfig`（项目 config.json → `~/.leow3bot/config.json`）+ `getApiKey()`/`getWebApiKey()` + `LEOW3BOT_HOME` + `SKILL_DIRS` + 符号/主色 `#D97757`。
 - **types.ts** — Anthropic messages 类型 + `StreamEvent`（5 事件）+ `CommittedItem`（进 `<Static>` 的视图模型）。
 - **store.ts** — `createStore`（CC 风格）+ `useSyncExternalStore`。**核心契约**：`committed` 只增（喂 `<Static>`）；`streamingText`/`phase` 等动态区字段每帧整体替换（ink 行级 diff）。
 - **llm.ts** — `callLLMStream` async generator。`@anthropic-ai/sdk` 配 Anthropic 兼容端点（`baseURL` + `authToken` + `signal`）。自己累积 `content_blocks`；yield 5 事件 + timing。
@@ -51,7 +51,7 @@ npm install -g .      # 本地全局安装测试
 - **agent.ts** — `handleSubmit`（命令/图片/对话分发）+ `runTurn`（多轮工具循环，`MAX_TOOL_ROUNDS`，ESC 中断保留 partial）。
 - **commands.ts** — 15 斜杠命令 + `parseCommand`/`handleCommand` + welcome logo。
 - **skills.ts** — `loadSkills`（扫 `SKILL_DIRS`，gray-matter 解析 frontmatter）+ `getSkillPrompt`（`$ARGUMENTS` 替换）+ `getSkillListing`（注入 system）。
-- **session.ts** — `~/.miniclaude/sessions/`；autosave/save/load/list + compressContent（持久化去 base64）。
+- **session.ts** — `~/.leow3bot/sessions/`；autosave/save/load/list + compressContent（持久化去 base64）。
 - **compaction.ts** — `compactMediaMessages`/`compactOldToolResults`。
 - **clipboard.ts** — `getClipboardImage`（WSL2 powershell / xclip / wl-paste / macOS osascript / Windows powershell）。
 

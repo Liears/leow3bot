@@ -1,4 +1,4 @@
-// miniclaude 入口：loadSkills + welcome 进 committed + render(<App/>)。
+// leow3bot 入口：loadSkills + welcome 进 committed + render(<App/>)。
 // 退出：q / Ctrl-C（ink 默认 exitOnCtrlC）。
 
 import React from 'react';

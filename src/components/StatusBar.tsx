@@ -68,7 +68,7 @@ export default function StatusBar() {
         {branch ? <Text color={ACCENT}>{branch}</Text> : null}
         {branch ? <Text color={SUB}>)</Text> : null}
         <Text color={SUB}> │ </Text>
-        <Text color={FG}>miniclaude</Text>
+        <Text color={FG}>leow3bot</Text>
       </Text>
       {/* 行 2：Context ░░ % · ↑in ↓out · TTFT · TPOT · tok/s */}
       <Text>

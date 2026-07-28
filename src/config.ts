@@ -25,10 +25,10 @@ interface UserConfig {
 }
 
 function loadConfig(): UserConfig {
-  // 1. 用户级 ~/.miniclaude/config.json（标准位置，开发/安装都改这）
-  //    注意：直接用 homedir() 拼，不能用 MINICLAUDE_HOME 常量（它在后面才定义，此处处于 TDZ）
+  // 1. 用户级 ~/.leow3bot/config.json（标准位置，开发/安装都改这）
+  //    注意：直接用 homedir() 拼，不能用 LEOW3BOT_HOME 常量（它在后面才定义，此处处于 TDZ）
   try {
-    return JSON.parse(readFileSync(path.join(homedir(), '.miniclaude', 'config.json'), 'utf-8'));
+    return JSON.parse(readFileSync(path.join(homedir(), '.leow3bot', 'config.json'), 'utf-8'));
   } catch {}
   // 2. 项目 config.json（fallback：兼容旧开发态/未迁移场景）
   try {
@@ -80,16 +80,16 @@ export const IMAGE_MAX_WIDTH = 2000;
 export const IMAGE_MAX_HEIGHT = 2000;
 export const IMAGE_TARGET_RAW_SIZE = 3_750_000;
 
-// miniclaude 用户级 home：config / sessions / skills 都在这下面
-export const MINICLAUDE_HOME = path.join(homedir(), '.miniclaude');
+// leow3bot 用户级 home：config / sessions / skills 都在这下面
+export const LEOW3BOT_HOME = path.join(homedir(), '.leow3bot');
 
 // skill 扫描目录（数组顺序=优先级，后者覆盖前者同名 skill）：
 //   1) ~/.claude/skills      —— Claude 用户级标准（`npx skills add` 默认装这）
-//   2) ~/.miniclaude/skills  —— miniclaude 自己的 home
+//   2) ~/.leow3bot/skills  —— leow3bot 自己的 home
 //   3) ./.claude/skills      —— 项目级（覆盖用户级）
 export const SKILL_DIRS = [
   path.join(homedir(), '.claude', 'skills'),
-  path.join(MINICLAUDE_HOME, 'skills'),
+  path.join(LEOW3BOT_HOME, 'skills'),
   path.join(process.cwd(), '.claude', 'skills'),
 ];
 export const SYSTEM_PROMPT = '';

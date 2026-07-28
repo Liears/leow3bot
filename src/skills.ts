@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
-import { MINICLAUDE_HOME } from './config.js';
+import { LEOW3BOT_HOME } from './config.js';
 
 export interface SkillInfo {
   name: string;
@@ -14,8 +14,8 @@ export interface SkillInfo {
 
 export const SKILLS_REGISTRY = new Map<string, SkillInfo>();
 
-// skill 开关：黑名单（~/.miniclaude/skills.json 存 disabled 列表），默认全启用
-const SKILLS_STATE_FILE = path.join(MINICLAUDE_HOME, 'skills.json');
+// skill 开关：黑名单（~/.leow3bot/skills.json 存 disabled 列表），默认全启用
+const SKILLS_STATE_FILE = path.join(LEOW3BOT_HOME, 'skills.json');
 let disabledSkills = new Set<string>();
 
 function loadDisabled(): void {

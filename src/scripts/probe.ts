@@ -1,4 +1,4 @@
-// probe：验证 callLLMStream（miniclaude 真实调用路径）的流式 + thinking + usage。
+// probe：验证 callLLMStream（leow3bot 真实调用路径）的流式 + thinking + usage。
 //   配好 config.json 后 npm run probe，看 thinking/text 事件流 + done 的 usage。
 import { callLLMStream } from '../llm.js';
 import { THINKING_BUDGET } from '../config.js';

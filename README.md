@@ -1,4 +1,4 @@
-# DeepAnalyze（miniclaude）
+# DeepAnalyze（leow3bot）
 
 CLI AI agent，**TypeScript + ink**，对标 Claude Code 的终端渲染。连接智谱 BigModel 的 Anthropic 兼容端点（glm-5.x），支持工具调用、流式输出、skill、会话存储、剪贴板图片粘贴、联网搜索/阅读。
 
@@ -17,12 +17,12 @@ CLI AI agent，**TypeScript + ink**，对标 Claude Code 的终端渲染。连�
 
 ### 全局安装
 ```bash
-npm install -g @yuanhechen/miniclaude
-miniclaude
+npm install -g @yuanhechen/leow3bot
+leow3bot
 ```
 
 ### 配置
-复制 `config.example.json` → `~/.miniclaude/config.json`，填你的智谱 BigModel apiKey：
+复制 `config.example.json` → `~/.leow3bot/config.json`，填你的智谱 BigModel apiKey：
 ```json
 {
   "apiBaseUrl": "https://open.bigmodel.cn/api/anthropic",
@@ -58,14 +58,14 @@ npm install -g .       # 本地全局安装测试
 
 ## skill 系统
 
-miniclaude 自动扫描三个目录的 `<name>/SKILL.md`：
+leow3bot 自动扫描三个目录的 `<name>/SKILL.md`：
 - `~/.claude/skills/` — `npx skills add` 默认装这（Claude 用户级标准）
-- `~/.miniclaude/skills/` — miniclaude 自己的 home
+- `~/.leow3bot/skills/` — leow3bot 自己的 home
 - `./.claude/skills/` — 项目级（优先级最高，覆盖同名）
 
 ```bash
 npx skills add https://github.com/vercel-labs/skills --skill find-skills
-miniclaude    # 自动发现并可用 find-skills
+leow3bot    # 自动发现并可用 find-skills
 ```
 
 ## 架构
