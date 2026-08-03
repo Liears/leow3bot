@@ -170,18 +170,21 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
 
     if (outcome.type === 'tool_call') {
       const batches = partitionToolCalls(outcome.tool_calls ?? []);
+      const allBlocks: ToolResultBlock[] = [];
       for (const batch of batches) {
         for (const tc of batch.calls) commit({ kind: 'tool_start', call: tc });
         // ask 工具内部 setPhase('ask_pending')；其他工具显示执行 spinner
         if (!(batch.calls.length === 1 && batch.calls[0].name === 'ask')) setPhase('tool_running');
         const results = await executeBatch(batch);
-        const blocks: ToolResultBlock[] = [];
         for (const [tc, res] of results) {
           commit({ kind: 'tool_result', call: tc, result: res });
-          blocks.push(buildToolResultBlock(tc, res));
+          allBlocks.push(buildToolResultBlock(tc, res));
         }
-        flushToolResults(blocks, messages);
       }
+      // 同一轮所有 tool_use 的结果必须合并成一条紧邻的 user 消息（Anthropic 契约：
+      // tool_result 必须紧随 tool_use 出现在同一条消息里）。拆多条会被 DeepSeek
+      // 等严格兼容端点以 400（tool_use without tool_result）拒绝。
+      flushToolResults(allBlocks, messages);
       autosaveSession(messages);
       continue; // 下一轮 LLM
     }
