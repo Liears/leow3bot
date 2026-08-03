@@ -27,7 +27,7 @@ export default function App() {
     }
   });
 
-  const showInput = s.phase === 'idle' || s.phase === 'ask_pending';
+  const showInput = s.phase === 'idle' || s.phase === 'ask_pending' || s.phase === 'confirm_pending';
 
   return (
     <Box flexDirection="column">
@@ -54,7 +54,7 @@ export default function App() {
           <Box flexDirection="column">
             <Separator />
             <Input
-              promptLabel={s.phase === 'ask_pending' ? '❓' : undefined}
+              promptLabel={s.phase === 'ask_pending' ? '❓' : s.phase === 'confirm_pending' ? '⚠️' : undefined}
               onSubmit={(t, imgs) => handleSubmit(t, imgs, exit)}
             />
             <Separator />

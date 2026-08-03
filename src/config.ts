@@ -7,6 +7,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
+// 权限规则：pattern 默认按前缀匹配，mode:'regex' 时按正则；reason 为命中时给模型的解释
+export interface PermissionRule {
+  pattern: string;
+  mode?: 'prefix' | 'regex';
+  reason?: string;
+}
+export interface PermissionsConfig {
+  deny?: PermissionRule[];
+  confirm?: PermissionRule[];
+}
+
 interface UserConfig {
   apiBaseUrl?: string;
   apiKey?: string;
@@ -14,6 +25,8 @@ interface UserConfig {
   maxTokens?: number;
   contextWindow?: number;
   temperature?: number;
+  // 权限管控：deny 命中直接拒绝；confirm 命中弹交互确认（~/.leow3bot/permissions.json 存记住的允许）
+  permissions?: PermissionsConfig;
   // web 工具（智谱原生 web_search / reader）
   webSearchEngine?: string;
   webSearchContentSize?: string;
@@ -50,6 +63,9 @@ export const TEMPERATURE = cfg.temperature ?? 0.7;
 
 // thinking（深度思考，默认常开）—— glm-5.x 经 Anthropic 兼容端点需显式传 thinking 参数才会发思考流
 export const THINKING_BUDGET = cfg.thinkingBudget ?? 5000;
+
+// 权限管控自定义规则（内置 deny 规则见 permissions.ts，不依赖此配置）
+export const USER_PERMISSIONS: PermissionsConfig = cfg.permissions ?? {};
 
 // —— web 工具配置（智谱原生 web_search / reader 端点，与 apiKey 同平台）——
 export const WEB_SEARCH_ENGINE = cfg.webSearchEngine ?? 'search_std';

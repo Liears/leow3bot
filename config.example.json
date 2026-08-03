@@ -8,5 +8,16 @@
   "webSearchEngine": "search_std",
   "webSearchContentSize": "medium",
   "webSearchCount": 10,
-  "webResultMaxChars": 30000
+  "webResultMaxChars": 30000,
+  "permissions": {
+    "deny": [
+      { "pattern": "dropdb", "reason": "删除数据库（示例）" },
+      { "pattern": "^find / ", "mode": "regex", "reason": "全盘扫描费时（示例，尾随空格避免误伤 find /tmp）" }
+    ],
+    "confirm": [
+      { "pattern": "rm -rf", "reason": "递归删除" },
+      { "pattern": "git reset --hard", "reason": "丢弃未提交修改" },
+      { "pattern": "^git push --force", "mode": "regex" }
+    ]
+  }
 }

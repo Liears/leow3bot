@@ -2,6 +2,7 @@
 
 import { TOOLS_REGISTRY } from './tools.js';
 import { MAX_TOOL_RESULT_CHARS, WEB_RESULT_MAX_CHARS } from './config.js';
+import { checkPermission, confirmAction, getPermissionTarget } from './permissions.js';
 import type { ToolCall, ToolResultBlock, MessageParam } from './types.js';
 
 export interface ToolBatch { safe: boolean; calls: ToolCall[] }
@@ -20,6 +21,18 @@ export function partitionToolCalls(toolCalls: ToolCall[]): ToolBatch[] {
 export async function executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   const def = TOOLS_REGISTRY[name];
   if (!def) return { type: 'error', message: `未知工具: ${name}` };
+  // 权限管控：deny 直接拒绝；confirm 弹交互确认（用户拒绝也拒绝执行）
+  const target = getPermissionTarget(name, args);
+  if (target !== null) {
+    const d = checkPermission(name, target);
+    if (d.verdict === 'deny') {
+      return { type: 'error', message: `⛔ 操作被权限管控拒绝（规则 ${d.ruleId}）：${d.reason}。请改用更安全的方式，或先向用户说明你的意图。` };
+    }
+    if (d.verdict === 'confirm') {
+      const ok = await confirmAction(name, target, d.reason ?? '命中用户配置的确认规则');
+      if (!ok) return { type: 'error', message: `操作被用户拒绝（权限确认），请换一种方式或先询问用户。` };
+    }
+  }
   try {
     return await def.function(args);
   } catch (e) {
