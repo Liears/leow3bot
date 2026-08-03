@@ -28,19 +28,24 @@ export interface ToolDef {
 // 工具实现
 // ============================================================
 
+// bash 每次都在全新 shell 中执行，工作目录固定为启动目录（cd 不跨调用保留）。
+// 输出带 [cwd] 前缀 + 工具描述声明，避免模型因不知道当前目录而乱 cd / find / 全盘搜索。
+const BASH_CWD = process.cwd();
+
 async function runBash(command: string) {
+  const cwdTag = `[cwd: ${BASH_CWD}]`;
   try {
     const { stdout, stderr } = await execAsync(command, { timeout: 30_000, maxBuffer: 1024 * 1024 });
     let out = stdout;
     if (stderr) out += '\n[stderr] ' + stderr;
-    return { type: 'bash' as const, command, output: (out || '(无输出)').slice(0, 2000) };
+    return { type: 'bash' as const, command, output: (cwdTag + '\n' + (out || '(无输出)')).slice(0, 2000) };
   } catch (e: unknown) {
     const err = e as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
-    if (err.killed) return { type: 'bash' as const, command, output: '错误：命令执行超时（30秒）' };
+    if (err.killed) return { type: 'bash' as const, command, output: cwdTag + '\n错误：命令执行超时（30秒）' };
     let out = err.stdout || '';
     if (err.stderr) out += '\n[stderr] ' + err.stderr;
     if (err.code) out += `\n[exit code: ${err.code}]`;
-    return { type: 'bash' as const, command, output: (out || err.message || String(e)).slice(0, 2000) };
+    return { type: 'bash' as const, command, output: (cwdTag + '\n' + (out || err.message || String(e))).slice(0, 2000) };
   }
 }
 
@@ -154,7 +159,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: false,
     schema: {
       name: 'bash',
-      description: '在本地执行 shell 命令并返回输出',
+      description: `在本地执行 shell 命令并返回输出。注意：工作目录固定为 ${BASH_CWD}（每次调用都是全新 shell，cd 不会跨调用保留），请使用绝对路径或 ${BASH_CWD} 下的相对路径`,
       input_schema: { type: 'object', properties: { command: { type: 'string', description: '要执行的 shell 命令' } }, required: ['command'] },
     },
   },
