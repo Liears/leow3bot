@@ -83,6 +83,10 @@ export function getSkillPrompt(name: string, args = ''): string | null {
   if (!s) return null;
   let p = s.content;
   if (args) p = p.replace(/\$ARGUMENTS/g, args);
+  // skill 自身目录占位符 → 正文里的相对脚本路径可由此定位。
+  // 两个名字都支持：${CLAUDE_SKILL_DIR} 兼容社区 skill（~/.claude/skills 生态），
+  // ${LEOW3BOT_SKILL_DIR} 是本项目的命名。
+  p = p.replace(/\$\{(CLAUDE_SKILL_DIR|LEOW3BOT_SKILL_DIR)\}/g, path.dirname(s.path));
   return p;
 }
 

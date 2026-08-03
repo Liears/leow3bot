@@ -1,7 +1,7 @@
 // 斜杠命令系统（移植 commands.py）+ welcome 横幅/logo。
 
 import { homedir } from 'node:os';
-import { MODEL } from './config.js';
+import { MODEL, getProviderLabel } from './config.js';
 import { TOOLS_SCHEMAS } from './tools.js';
 import { getSystem } from './agent.js';
 import { getState, setPhase } from './store.js';
@@ -174,7 +174,7 @@ export function getWelcomeItems(): CommittedItem[] {
     name: 'Leow3Bot',
     info: [
       'Leow3Bot v0.1.0',
-      `${MODEL} · 智谱 BigModel`,
+      `${MODEL} · ${getProviderLabel()}`,
       cwdShort,
     ],
   }];

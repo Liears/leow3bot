@@ -62,6 +62,16 @@ export const WEB_SEARCH_URL = 'https://open.bigmodel.cn/api/paas/v4/web_search';
 export function getApiKey(): string {
   return API_KEY;
 }
+// 按 API_BASE_URL 推断平台显示名（banner 用），未知端点回退 hostname
+export function getProviderLabel(): string {
+  const host = new URL(API_BASE_URL).hostname;
+  if (host.includes('bigmodel')) return '智谱 BigModel';
+  if (host.includes('deepseek')) return 'DeepSeek';
+  if (host.includes('anthropic')) return 'Anthropic';
+  if (host.includes('moonshot')) return 'Moonshot';
+  if (host.includes('qwen') || host.includes('aliyun')) return '通义千问';
+  return host;
+}
 // web 工具 key：默认复用 apiKey（智谱同 key 零配置），可在 config.json 用 webApiKey 覆盖
 export function getWebApiKey(): string {
   return cfg.webApiKey || API_KEY;

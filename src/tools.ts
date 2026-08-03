@@ -130,7 +130,11 @@ function runSkill(name: string, args = '') {
     const available = SKILLS_REGISTRY.size ? [...SKILLS_REGISTRY.keys()].join(', ') : '无';
     return `错误：未找到 skill '${name}'。可用 skills: ${available}`;
   }
-  return `[Skill: ${name}]\n\n${prompt}`;
+  // 锚定 skill 目录（对齐 Claude Code 的 "Base directory for this skill"）。
+  // 没有这行，正文里的相对路径（scripts/xxx.py、references/）无从解析，模型会去 find / 全盘找。
+  const baseDir = SKILLS_REGISTRY.get(name)?.path;
+  const anchor = baseDir ? `\nBase directory for this skill: ${path.dirname(baseDir)}` : '';
+  return `[Skill: ${name}]${anchor}\n\n${prompt}`;
 }
 
 // ask：异步（Input resolve）。把 Python 阻塞 input() 异步化为 store askResolver。
