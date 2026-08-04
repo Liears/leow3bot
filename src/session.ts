@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { LEOW3BOT_HOME } from './config.js';
-import type { ContentBlock, MessageContent, MessageParam } from './types.js';
+import { commit } from './store.js';
+import type { CommittedItem, ContentBlock, MessageContent, MessageParam, ToolCall } from './types.js';
 
 const SESSION_DIR = path.join(LEOW3BOT_HOME, 'sessions');
 try { mkdirSync(SESSION_DIR, { recursive: true }); } catch { /* noop */ }
@@ -127,6 +128,93 @@ export function loadSession(filepath: string): MessageParam[] | null {
     const data = JSON.parse(readFileSync(p, 'utf-8'));
     return (data.messages ?? null) as MessageParam[] | null;
   } catch { return null; }
+}
+
+// —— 会话恢复（仿 CC --resume / --continue）——
+
+/** 按会话 id（文件名，可带可不带 .json，也接受完整路径）加载会话。 */
+export function resumeSession(id: string): { messages: MessageParam[]; filepath: string } | null {
+  let p = id;
+  if (!p.endsWith('.json')) p += '.json';
+  const fp = path.isAbsolute(p) ? p : path.join(SESSION_DIR, p);
+  const msgs = loadSession(fp);
+  return msgs ? { messages: msgs, filepath: fp } : null;
+}
+
+/** 恢复当前项目最近会话：优先 autosave（current_<hash>.json），否则最近的快照。 */
+export function resumeLatest(): { messages: MessageParam[]; filepath: string } | null {
+  const current = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
+  if (existsSync(current)) {
+    const msgs = loadSession(current);
+    if (msgs) return { messages: msgs, filepath: current };
+  }
+  const latest = listSessions(20).find(s => s.is_current_project && !s.is_current);
+  return latest ? resumeSession(latest.filename) : null;
+}
+
+// 提取 user 消息的文本（多 text 块拼接；无文本时按 [图片] 处理）
+function userText(content: MessageContent): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const b of content as ContentBlock[]) {
+    if (!b || typeof b !== 'object') continue;
+    if (b.type === 'text') parts.push(String((b as { text: unknown }).text));
+    else if (b.type === 'image') parts.push('[图片]');
+  }
+  return parts.join(' ');
+}
+
+/**
+ * 把会话消息重建为 committed 项（UI 完整恢复历史对话，与流式渲染一致）：
+ * assistant thinking → thinking_line、text 按 \n 拆 assistant_line、tool_use → tool_start；
+ * user 普通文本 → user；含 tool_result 的 user 消息 → tool_result 项（配对上方的 tool_start）。
+ */
+export function rebuildCommitted(messages: MessageParam[]): CommittedItem[] {
+  const items: CommittedItem[] = [];
+  for (const m of messages) {
+    const content: ContentBlock[] = Array.isArray(m.content)
+      ? (m.content as ContentBlock[])
+      : [{ type: 'text', text: String(m.content) }];
+    if (m.role === 'assistant') {
+      for (const b of content as ContentBlock[]) {
+        if (!b || typeof b !== 'object') continue;
+        if (b.type === 'thinking') {
+          items.push({ kind: 'thinking_line', text: String((b as { thinking: unknown }).thinking ?? '') });
+        } else if (b.type === 'text') {
+          const t = String((b as { text: unknown }).text ?? '');
+          if (!t) continue;
+          for (const line of t.split('\n')) items.push({ kind: 'assistant_line', text: line, code: false });
+        } else if (b.type === 'tool_use') {
+          const tu = b as unknown as { id?: string; name?: string; input?: Record<string, unknown> };
+          const call: ToolCall = { id: tu.id ?? '', name: tu.name ?? '', input: tu.input ?? {} };
+          items.push({ kind: 'tool_start', call });
+        }
+      }
+    } else {
+      const blocks = content as ContentBlock[];
+      const toolResults = blocks.filter(b => b && typeof b === 'object' && b.type === 'tool_result');
+      if (toolResults.length) {
+        for (const b of toolResults) {
+          const tr = b as unknown as { tool_use_id?: string; content?: unknown };
+          items.push({
+            kind: 'tool_result',
+            call: { id: tr.tool_use_id ?? '', name: '', input: {} },
+            result: tr.content,
+          });
+        }
+      } else {
+        const text = userText(content);
+        items.push({ kind: 'user', text: text.trim() ? text : '[图片]' });
+      }
+    }
+  }
+  return items;
+}
+
+/** 恢复会话并把历史重建进 committed（启动 --resume / /load 共用）。 */
+export function applyResume(messages: MessageParam[]): void {
+  for (const item of rebuildCommitted(messages)) commit(item);
 }
 
 export function listSessions(limit = 10): SessionMeta[] {

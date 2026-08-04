@@ -7,6 +7,7 @@ import MessageList from './MessageList.js';
 import Input from './Input.js';
 import StatusBar from './StatusBar.js';
 import SkillsPicker from './SkillsPicker.js';
+import SessionPicker from './SessionPicker.js';
 import { handleSubmit, abortRef, buildSystem, setSystem } from '../agent.js';
 
 // 输入区上下分隔线（复刻 CC 风格）
@@ -65,6 +66,10 @@ export default function App() {
 
         {s.phase === 'skills_picker' ? (
           <SkillsPicker onDone={() => { setSystem(buildSystem()); setPhase('idle'); }} />
+        ) : null}
+
+        {s.phase === 'session_picker' ? (
+          <SessionPicker />
         ) : null}
 
         <StatusBar />

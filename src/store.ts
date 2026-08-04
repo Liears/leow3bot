@@ -4,7 +4,7 @@
 import { useSyncExternalStore } from 'react';
 import type { CommittedItem, Usage, Timing, Meta } from './types.js';
 
-export type Phase = 'idle' | 'thinking' | 'streaming' | 'tool_running' | 'ask_pending' | 'confirm_pending' | 'skills_picker';
+export type Phase = 'idle' | 'thinking' | 'streaming' | 'tool_running' | 'ask_pending' | 'confirm_pending' | 'skills_picker' | 'session_picker';
 
 export interface State {
   committed: CommittedItem[];      // 只增 → <Static> → 原生 scrollback
