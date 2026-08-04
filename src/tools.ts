@@ -109,7 +109,10 @@ export async function compressImage(raw: Buffer, ext: string): Promise<{ data: B
   return { data: d, mediaType: 'image/jpeg' };
 }
 
-async function readFile(p: string) {
+// read：支持 offset/limit 行范围读取（对齐 Claude Code 的 FileReadTool）。
+// 大文件不截断——默认读前 400 行，未读完返回提示用 offset 续读，
+// 模型分页取完整内容，信息不丢、完全掌控。
+async function readFile(p: string, offset = 1, limit?: number) {
   const ext = path.extname(p).toLowerCase();
   if (IMAGE_EXTENSIONS.includes(ext)) {
     try {
@@ -124,7 +127,16 @@ async function readFile(p: string) {
   }
   try {
     const content = await fsReadFile(p, 'utf-8');
-    return { type: 'text' as const, content };
+    const lines = content.split('\n');
+    const total = lines.length;
+    const start = Math.max(0, offset - 1);
+    const page = lines.slice(start, start + (limit ?? 400));
+    let out = page.join('\n');
+    if (start + (limit ?? 400) < total) {
+      const end = start + page.length;
+      out += `\n\n[已读第 ${start + 1}-${end} 行，共 ${total} 行；继续请用 offset=${end + 1}]`;
+    }
+    return { type: 'text' as const, content: out };
   } catch (e) {
     return { type: 'error' as const, message: `错误：${(e as Error).message}` };
   }
@@ -194,12 +206,20 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     },
   },
   read: {
-    function: (a) => readFile(a.path as string),
+    function: (a) => readFile(a.path as string, a.offset as number | undefined, a.limit as number | undefined),
     concurrencySafe: true,
     schema: {
       name: 'read',
-      description: '读取指定路径的文件内容（支持文本和图片）',
-      input_schema: { type: 'object', properties: { path: { type: 'string', description: '文件路径' } }, required: ['path'] },
+      description: '读取指定路径的文件内容（支持文本和图片）。大文件支持行范围读取：offset=起始行（从 1 开始，默认 1）、limit=读取行数（默认 400）；未读完会返回提示，用 offset 参数续读下一页',
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '文件路径' },
+          offset: { type: 'number', description: '起始行号（从 1 开始，默认 1）' },
+          limit: { type: 'number', description: '读取行数（默认 400；未读完会提示续读 offset）' },
+        },
+        required: ['path'],
+      },
     },
   },
   edit: {
