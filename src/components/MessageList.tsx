@@ -35,13 +35,13 @@ export default function MessageList({ item }: { item: GroupedItem }) {
   if (item.kind === 'para') {
     if (item.sub === 'assistant') {
       return (
-        <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column" gap={2}>
           {item.lines.map((l, i) => <Box key={i}>{renderMarkdownLine(l.text, l.code ?? false)}</Box>)}
         </Box>
       );
     }
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column" gap={2}>
         {item.lines.map((l, i) => (
           <Text key={i} dimColor italic>{i === 0 ? `${SYM_THINK} ` : '  '}{renderInline(l.text)}</Text>
         ))}
@@ -52,7 +52,7 @@ export default function MessageList({ item }: { item: GroupedItem }) {
   switch (item.kind) {
     case 'user':
       return (
-        <Box marginTop={2}>
+        <Box marginTop={1}>
           <Text color={ACCENT} bold>{SYM_USER} </Text>
           <Text color={ACCENT}>{item.text}</Text>
         </Box>
@@ -68,7 +68,7 @@ export default function MessageList({ item }: { item: GroupedItem }) {
       );
     case 'tool_start':
       return (
-        <Box marginTop={2}>
+        <Box marginTop={1}>
           <Text color={ACCENT} bold>{SYM_TOOL} {item.call.name} </Text>
           <Text dimColor>{summarizeInput(item.call.input)}</Text>
         </Box>
@@ -83,7 +83,7 @@ export default function MessageList({ item }: { item: GroupedItem }) {
     case 'system': {
       const color = item.tone === 'err' ? 'red' : item.tone === 'ok' ? 'green' : item.tone === 'warn' ? 'yellow' : undefined;
       return (
-        <Box marginTop={2}>
+        <Box marginTop={1}>
           <Text color={color} dimColor={item.tone === 'muted'}>{item.text}</Text>
         </Box>
       );

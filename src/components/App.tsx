@@ -43,18 +43,18 @@ export default function App() {
           思考逐行进 scrollback，动态区只剩 spinner/Input，高度小且稳定。 */}
       <Box flexDirection="column">
         {(s.phase === 'thinking' || s.phase === 'streaming') ? (
-          <Box gap={1} marginTop={2}>
+          <Box gap={1} marginTop={1}>
             <Text color={ACCENT}><Spinner type="dots" /></Text>
             <Text dimColor italic>{s.phase === 'thinking' ? `${SYM_THINK} thinking…` : '生成中…'}</Text>
           </Box>
         ) : null}
 
         {s.error ? (
-          <Box marginTop={2}><Text color="red">{s.error}</Text></Box>
+          <Box marginTop={1}><Text color="red">{s.error}</Text></Box>
         ) : null}
 
         {showInput ? (
-          <Box flexDirection="column" marginTop={2}>
+          <Box flexDirection="column" marginTop={1}>
             <Separator />
             <Input
               promptLabel={s.phase === 'ask_pending' ? '❓' : s.phase === 'confirm_pending' ? '⚠️' : undefined}
