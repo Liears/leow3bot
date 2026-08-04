@@ -5,8 +5,10 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { LEOW3BOT_HOME } from './config.js';
-import { commit } from './store.js';
-import { setMessages } from './agent.js';
+import { commit, setUsageTiming } from './store.js';
+import { setMessages, getSystem } from './agent.js';
+import { countTokens } from './llm.js';
+import { TOOLS_SCHEMAS } from './tools.js';
 import type { CommittedItem, ContentBlock, MessageContent, MessageParam, ToolCall } from './types.js';
 
 const SESSION_DIR = path.join(LEOW3BOT_HOME, 'sessions');
@@ -260,6 +262,20 @@ export function activateResume(resumed: { messages: MessageParam[]; projectRoot:
   }
   setMessages(resumed.messages);
   applyResume(resumed.messages);
+  void refreshUsageAfterResume(resumed.messages); // 恢复后立即显示上下文占用（不阻塞）
+}
+
+// 恢复会话后 usage 为 null，状态栏 Context 不显示——后台补一次上下文占用：
+// 优先 countTokens 精确计数（模型 tokenizer），端点不支持则字符/4 粗估。
+async function refreshUsageAfterResume(messages: MessageParam[]): Promise<void> {
+  let input: number | null = null;
+  try {
+    input = await countTokens(getSystem(), messages, TOOLS_SCHEMAS);
+  } catch { /* fallthrough */ }
+  if (input == null) {
+    input = Math.round(JSON.stringify(messages).length / 4);
+  }
+  setUsageTiming({ input_tokens: input, output_tokens: 0 }, null);
 }
 
 export function listSessions(limit = 10): SessionMeta[] {
