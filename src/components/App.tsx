@@ -3,7 +3,7 @@ import { Box, Text, Static, useInput, useApp, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import { useStore, setPhase } from '../store.js';
 import { SYM_THINK, ACCENT } from '../config.js';
-import MessageList from './MessageList.js';
+import MessageList, { groupCommitted } from './MessageList.js';
 import Input from './Input.js';
 import StatusBar from './StatusBar.js';
 import SkillsPicker from './SkillsPicker.js';
@@ -29,10 +29,13 @@ export default function App() {
 
   const showInput = s.phase === 'idle' || s.phase === 'ask_pending' || s.phase === 'confirm_pending';
 
+  // 连续行分组（assistant/thinking 段落），useMemo 稳定引用避免 Static 整组重渲
+  const grouped = React.useMemo(() => groupCommitted(s.committed), [s.committed]);
+
   return (
     <Box flexDirection="column">
-      {/* 已完成消息进原生 scrollback（只增） */}
-      <Static items={s.committed}>
+      {/* 已完成消息进原生 scrollback（只增）；连续行分组渲染，段内行间留空 */}
+      <Static items={grouped}>
         {(item, i) => <MessageList key={i} item={item} />}
       </Static>
 
