@@ -31,6 +31,12 @@ export function refreshProject(): void {
   PROJECT_HASH = createHash('sha256').update(PROJECT_ROOT).digest('hex').slice(0, 12);
   CURRENT_FILE = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
 }
+
+// 会话主题（后台自动生成，见 title.ts）：会话名 / resume 列表的定位依据。
+// 内存态，resume 会话时从文件 name 恢复为初始值。
+let sessionTitle: string | null = null;
+export function setSessionTitle(t: string): void { sessionTitle = t; }
+export function getSessionTitle(): string | null { return sessionTitle; }
 const CURRENT_PREFIX = 'current_';
 const MAX_SESSIONS = 50;
 
@@ -106,7 +112,7 @@ export function autosaveSession(messages: MessageParam[]): void {
   const data = {
     version: 1,
     timestamp: timestamp(),
-    name: genName(messages),
+    name: sessionTitle ?? genName(messages), // 有后台生成的主题则用主题
     projectRoot: PROJECT_ROOT,
     message_count: messages.length,
     messages: compressMessages(messages),
@@ -121,7 +127,7 @@ export function clearAutosave(): void {
 export function saveSession(messages: MessageParam[], name?: string): string {
   if (!messages.length) return '';
   const ts = timestamp();
-  const n = name ?? genName(messages);
+  const n = name ?? sessionTitle ?? genName(messages);
   const data = { version: 1, timestamp: ts, name: n, projectRoot: PROJECT_ROOT, message_count: messages.length, messages: compressMessages(messages) };
   const fp = path.join(SESSION_DIR, `${ts}.json`);
   try { writeFileSync(fp, JSON.stringify(data, null, 2), 'utf-8'); } catch { return ''; }
@@ -142,7 +148,7 @@ export function loadSession(filepath: string): MessageParam[] | null {
 // —— 会话恢复（仿 CC --resume / --continue）——
 
 /** 按会话 id（文件名，可带可不带 .json，也接受完整路径）加载会话。 */
-export function resumeSession(id: string): { messages: MessageParam[]; filepath: string; projectRoot: string } | null {
+export function resumeSession(id: string): { messages: MessageParam[]; filepath: string; projectRoot: string; name: string } | null {
   let p = id;
   if (!p.endsWith('.json')) p += '.json';
   const fp = path.isAbsolute(p) ? p : path.join(SESSION_DIR, p);
@@ -151,12 +157,17 @@ export function resumeSession(id: string): { messages: MessageParam[]; filepath:
     const data = JSON.parse(readFileSync(fp, 'utf-8'));
     const messages = (data.messages ?? null) as MessageParam[] | null;
     if (!messages) return null;
-    return { messages, filepath: fp, projectRoot: String(data.projectRoot ?? '') };
+    return {
+      messages,
+      filepath: fp,
+      projectRoot: String(data.projectRoot ?? ''),
+      name: String(data.name ?? ''),
+    };
   } catch { return null; }
 }
 
 /** 恢复当前项目最近会话：优先 autosave（current_<hash>.json），否则最近的快照。 */
-export function resumeLatest(): { messages: MessageParam[]; filepath: string; projectRoot: string } | null {
+export function resumeLatest(): { messages: MessageParam[]; filepath: string; projectRoot: string; name: string } | null {
   const current = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
   if (existsSync(current)) {
     const r = resumeSession(current);

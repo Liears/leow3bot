@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ACCENT, getSkillDirs, MODEL } from '../config.js';
-import { listSessions, resumeSession, activateResume } from '../session.js';
+import { listSessions, resumeSession, activateResume, setSessionTitle } from '../session.js';
 import { commit, setPhase, setMeta } from '../store.js';
 import { loadSkills, SKILLS_REGISTRY } from '../skills.js';
 import { TOOLS_REGISTRY } from '../tools.js';
@@ -22,6 +22,7 @@ export default function SessionPicker() {
         if (resumed) {
           // 与启动 --resume 一致：chdir 到会话所属项目 + 消息/历史恢复 + 刷新 meta 与项目级 skill
           const prevCwd = process.cwd();
+          setSessionTitle(resumed.name); // 主题更新基准 = 会话文件里的主题
           activateResume(resumed);
           if (process.cwd() !== prevCwd) {
             loadSkills(getSkillDirs()); // 项目级 skill 按新目录重扫

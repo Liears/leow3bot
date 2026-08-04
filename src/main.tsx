@@ -15,13 +15,13 @@ import { setSystem, buildSystem } from './agent.js';
 import { getWelcomeItems } from './commands.js';
 import { TOOLS_REGISTRY } from './tools.js';
 import { getSkillDirs, MODEL } from './config.js';
-import { resumeSession, resumeLatest, activateResume } from './session.js';
+import { resumeSession, resumeLatest, activateResume, setSessionTitle } from './session.js';
 import type { MessageParam } from './types.js';
 
 // —— 参数解析（仿 Claude Code）：--resume <id> / -r [id] / --continue / -c ——
 // -r 带值 → 按 ID 直接恢复；不带值 → 启动时弹交互式会话选择器
 const args = process.argv.slice(2);
-let resumed: { messages: MessageParam[]; filepath: string; projectRoot: string } | null = null;
+let resumed: { messages: MessageParam[]; filepath: string; projectRoot: string; name: string } | null = null;
 let picker = false;
 if (args[0] === '--resume' || args[0] === '-r') {
   const id = args[1];
@@ -56,6 +56,7 @@ for (const item of getWelcomeItems()) commit(item);
 if (resumed) {
   // 完全恢复：chdir 到会话所属项目（如不同）+ 消息进上下文 + 历史重建进 committed
   const prevCwd = process.cwd();
+  setSessionTitle(resumed.name); // 主题更新基准 = 会话文件里的主题
   activateResume(resumed);
   const cwdChanged = process.cwd() !== prevCwd;
   if (cwdChanged) {

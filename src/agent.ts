@@ -11,6 +11,7 @@ import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
 import { TOOLS_SCHEMAS } from './tools.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
+import { maybeUpdateTitle } from './title.js';
 import type { MessageParam, ContentBlock, ToolResultBlock, ToolCall, Usage, Timing } from './types.js';
 
 export interface PastedImg { data: Buffer; mediaType: string; dims: string }
@@ -146,6 +147,7 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
           };
           setUsageTiming(turnUsage, turnTiming);
           messages.push(ev.assistant_msg);
+          maybeUpdateTitle(messages); // 后台生成会话主题（fire-and-forget，不阻塞）
           outcome = ev;
           break;
         }
