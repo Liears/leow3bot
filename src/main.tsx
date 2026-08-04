@@ -9,13 +9,14 @@
 import React from 'react';
 import { render } from 'ink';
 import App from './components/App.js';
-import { commit, setMeta, setPhase, getState } from './store.js';
+import { commit, setMeta, setPhase } from './store.js';
 import { loadSkills, SKILLS_REGISTRY } from './skills.js';
 import { setSystem, buildSystem } from './agent.js';
 import { getWelcomeItems } from './commands.js';
 import { TOOLS_REGISTRY } from './tools.js';
 import { getSkillDirs, MODEL } from './config.js';
 import { resumeSession, resumeLatest, activateResume, setSessionTitle } from './session.js';
+import { initTitleState } from './title.js';
 import type { MessageParam } from './types.js';
 
 // —— 参数解析（仿 Claude Code）：--resume <id> / -r [id] / --continue / -c ——
@@ -57,10 +58,12 @@ if (resumed) {
   // 完全恢复：chdir 到会话所属项目（如不同）+ 消息进上下文 + 历史重建进 committed
   const prevCwd = process.cwd();
   setSessionTitle(resumed.name); // 主题更新基准 = 会话文件里的主题
+  initTitleState(resumed.messages); // 主题节流基准 = 当前 user 消息数（避免首轮立即重生成）
   activateResume(resumed);
   const cwdChanged = process.cwd() !== prevCwd;
   if (cwdChanged) {
     loadSkills(getSkillDirs()); // 项目级 skill 按新目录重扫
+    setSystem(buildSystem()); // 重建系统提示词（skill 列表随新目录变化）
     setMeta({ model: MODEL, nTools: Object.keys(TOOLS_REGISTRY).length, nSkills: SKILLS_REGISTRY.size, cwd: process.cwd() }); // 状态栏显示新目录
   }
   commit({

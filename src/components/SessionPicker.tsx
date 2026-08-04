@@ -4,6 +4,8 @@ import { ACCENT, getSkillDirs, MODEL } from '../config.js';
 import { listSessions, resumeSession, activateResume, setSessionTitle } from '../session.js';
 import { commit, setPhase, setMeta } from '../store.js';
 import { loadSkills, SKILLS_REGISTRY } from '../skills.js';
+import { setSystem, buildSystem } from '../agent.js';
+import { initTitleState } from '../title.js';
 import { TOOLS_REGISTRY } from '../tools.js';
 import { homedir } from 'node:os';
 
@@ -23,9 +25,11 @@ export default function SessionPicker() {
           // 与启动 --resume 一致：chdir 到会话所属项目 + 消息/历史恢复 + 刷新 meta 与项目级 skill
           const prevCwd = process.cwd();
           setSessionTitle(resumed.name); // 主题更新基准 = 会话文件里的主题
+          initTitleState(resumed.messages); // 主题节流基准 = 当前 user 消息数
           activateResume(resumed);
           if (process.cwd() !== prevCwd) {
             loadSkills(getSkillDirs()); // 项目级 skill 按新目录重扫
+            setSystem(buildSystem()); // 重建系统提示词（skill 列表随新目录变化）
             setMeta({
               model: MODEL,
               nTools: Object.keys(TOOLS_REGISTRY).length,
@@ -38,6 +42,9 @@ export default function SessionPicker() {
             text: `✓ 已恢复会话 ${s.filename}（${resumed.messages.length} 条消息）` +
               (process.cwd() !== prevCwd ? `，工作目录已切换: ${process.cwd()}` : ''),
           });
+        } else {
+          // 恢复失败（文件被删/损坏）要有明确反馈，不能静默开新会话
+          commit({ kind: 'system', tone: 'err', text: `✗ 恢复会话失败: ${s.filename}（文件不存在或已损坏）` });
         }
       }
       setPhase('idle');

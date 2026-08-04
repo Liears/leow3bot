@@ -35,9 +35,9 @@ export function refreshProject(): void {
 }
 
 // 会话主题（后台自动生成，见 title.ts）：会话名 / resume 列表的定位依据。
-// 内存态，resume 会话时从文件 name 恢复为初始值。
+// 内存态，resume 会话时从文件 name 恢复为初始值。空串归一为 null（视为无主题）。
 let sessionTitle: string | null = null;
-export function setSessionTitle(t: string): void { sessionTitle = t; }
+export function setSessionTitle(t: string): void { sessionTitle = t && t.trim() ? t : null; }
 export function getSessionTitle(): string | null { return sessionTitle; }
 const CURRENT_PREFIX = 'current_';
 const MAX_SESSIONS = 50;
@@ -154,14 +154,18 @@ export function resumeSession(id: string): { messages: MessageParam[]; filepath:
   let p = id;
   if (!p.endsWith('.json')) p += '.json';
   const fp = path.isAbsolute(p) ? p : path.join(SESSION_DIR, p);
-  if (!existsSync(fp)) return null;
+  // 路径必须在 sessions 目录内（防相对路径穿越：resumeSession('../../foo')）
+  const resolved = path.resolve(fp);
+  if (!resolved.startsWith(path.resolve(SESSION_DIR) + path.sep)) return null;
+  if (!existsSync(resolved)) return null;
   try {
-    const data = JSON.parse(readFileSync(fp, 'utf-8'));
-    const messages = (data.messages ?? null) as MessageParam[] | null;
-    if (!messages) return null;
+    const data = JSON.parse(readFileSync(resolved, 'utf-8'));
+    const messages = (data.messages ?? null) as unknown;
+    // 只接受消息数组（畸形文件返回 null 而非让 setMessages 崩溃）
+    if (!Array.isArray(messages)) return null;
     return {
-      messages,
-      filepath: fp,
+      messages: messages as MessageParam[],
+      filepath: resolved,
       projectRoot: String(data.projectRoot ?? ''),
       name: String(data.name ?? ''),
     };
@@ -207,7 +211,8 @@ export function rebuildCommitted(messages: MessageParam[]): CommittedItem[] {
       for (const b of content as ContentBlock[]) {
         if (!b || typeof b !== 'object') continue;
         if (b.type === 'thinking') {
-          items.push({ kind: 'thinking_line', text: String((b as { thinking: unknown }).thinking ?? '') });
+          const t = String((b as { thinking: unknown }).thinking ?? '');
+          if (t) items.push({ kind: 'thinking_line', text: t });
         } else if (b.type === 'text') {
           const t = String((b as { text: unknown }).text ?? '');
           if (!t) continue;
@@ -230,6 +235,10 @@ export function rebuildCommitted(messages: MessageParam[]): CommittedItem[] {
             result: tr.content,
           });
         }
+        // 工具轮后用户接着输入的文本会与 tool_result 合并进同一条 user 消息
+        // （appendUserMessage 角色合并），恢复时也要渲染，否则 UI 静默丢失
+        const text = userText(content);
+        if (text.trim()) items.push({ kind: 'user', text });
       } else {
         const text = userText(content);
         items.push({ kind: 'user', text: text.trim() ? text : '[图片]' });

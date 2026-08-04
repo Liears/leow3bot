@@ -10,6 +10,11 @@ import type { MessageParam } from './types.js';
 let lastTriggerUserCount = 0; // 上次触发时的 user 消息数
 let pending = false;
 
+/** resume 会话后调用：以当前 user 消息数为基准，避免首轮立即重生成主题。 */
+export function initTitleState(messages: MessageParam[]): void {
+  lastTriggerUserCount = messages.filter(m => m.role === 'user').length;
+}
+
 // 对话文本化摘要（生成主题的输入）：首条 user 消息 + 最近 6 条消息，裁剪到 ~4000 字符
 function buildBrief(messages: MessageParam[]): string {
   const parts: string[] = [];
@@ -76,9 +81,9 @@ export function maybeUpdateTitle(messages: MessageParam[]): void {
       if (title) {
         setSessionTitle(title);
         autosaveSession(messages); // 立即用新主题重写 autosave（等下次 autosave 可能太晚）
+        lastTriggerUserCount = userCount; // 仅成功时推进节流（失败则下轮很快重试）
       }
     } catch { /* 端点异常静默，下轮再试 */ }
     pending = false;
-    lastTriggerUserCount = userCount;
   })();
 }

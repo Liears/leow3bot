@@ -133,7 +133,6 @@ export function getSkillDirs(): string[] {
     path.join(process.cwd(), '.claude', 'skills'),
   ];
 }
-export const SKILL_DIRS = getSkillDirs();
 export const SYSTEM_PROMPT = '';
 
 // CC 风格符号 + 主色

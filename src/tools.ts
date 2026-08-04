@@ -3,7 +3,7 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile as fsReadFile, writeFile as fsWriteFile, mkdir } from 'node:fs/promises';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -41,9 +41,15 @@ const BASH_OUT_DIR = path.join(
   `leow3bot-${typeof process.getuid === 'function' ? process.getuid() : 0}`,
 ); // /tmp/leow3bot-{uid}/，多用户共享 /tmp 防权限冲突（对齐 CC 的 claude-{uid}）
 
+// 落盘时顺带清理超过 24h 的旧输出文件（WSL2 的 /tmp 不随重启清理，防目录无限增长）
 function saveBashOutput(full: string): string {
   try {
     mkdirSync(BASH_OUT_DIR, { recursive: true });
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    for (const f of readdirSync(BASH_OUT_DIR)) {
+      const fp = path.join(BASH_OUT_DIR, f);
+      try { if (statSync(fp).mtimeMs < cutoff) unlinkSync(fp); } catch { /* noop */ }
+    }
     const fp = path.join(BASH_OUT_DIR, `bash-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
     writeFileSync(fp, full, 'utf-8');
     return fp;
@@ -129,10 +135,14 @@ async function readFile(p: string, offset = 1, limit?: number) {
     const content = await fsReadFile(p, 'utf-8');
     const lines = content.split('\n');
     const total = lines.length;
+    const pageSize = Math.max(1, Math.floor(limit ?? 400)); // limit ≤ 0 钳制为 1，防空页死循环
     const start = Math.max(0, offset - 1);
-    const page = lines.slice(start, start + (limit ?? 400));
+    if (start >= total) {
+      return { type: 'text' as const, content: `[offset=${offset} 超出文件总行数 ${total}，请用较小的 offset]` };
+    }
+    const page = lines.slice(start, start + pageSize);
     let out = page.join('\n');
-    if (start + (limit ?? 400) < total) {
+    if (start + pageSize < total) {
       const end = start + page.length;
       out += `\n\n[已读第 ${start + 1}-${end} 行，共 ${total} 行；继续请用 offset=${end + 1}]`;
     }
