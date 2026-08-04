@@ -6,12 +6,14 @@ import path from 'node:path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { LEOW3BOT_HOME } from './config.js';
 import { commit } from './store.js';
+import { setMessages } from './agent.js';
 import type { CommittedItem, ContentBlock, MessageContent, MessageParam, ToolCall } from './types.js';
 
 const SESSION_DIR = path.join(LEOW3BOT_HOME, 'sessions');
 try { mkdirSync(SESSION_DIR, { recursive: true }); } catch { /* noop */ }
 
 // 项目隔离：每个项目（git root，无 git 则 cwd）独立一份 autosave，互不串。
+// --resume 恢复会话时会 chdir 到会话所属项目，项目状态需可刷新（refreshProject）。
 function findProjectRoot(): string {
   try {
     const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf-8' });
@@ -19,9 +21,16 @@ function findProjectRoot(): string {
   } catch { /* noop */ }
   return process.cwd();
 }
-export const PROJECT_ROOT = findProjectRoot();
-const PROJECT_HASH = createHash('sha256').update(PROJECT_ROOT).digest('hex').slice(0, 12);
-const CURRENT_FILE = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
+export let PROJECT_ROOT = findProjectRoot();
+let PROJECT_HASH = createHash('sha256').update(PROJECT_ROOT).digest('hex').slice(0, 12);
+let CURRENT_FILE = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
+
+/** chdir 后重算项目根 / autosave 文件路径（恢复会话切换目录时调用）。 */
+export function refreshProject(): void {
+  PROJECT_ROOT = findProjectRoot();
+  PROJECT_HASH = createHash('sha256').update(PROJECT_ROOT).digest('hex').slice(0, 12);
+  CURRENT_FILE = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
+}
 const CURRENT_PREFIX = 'current_';
 const MAX_SESSIONS = 50;
 
@@ -133,20 +142,25 @@ export function loadSession(filepath: string): MessageParam[] | null {
 // —— 会话恢复（仿 CC --resume / --continue）——
 
 /** 按会话 id（文件名，可带可不带 .json，也接受完整路径）加载会话。 */
-export function resumeSession(id: string): { messages: MessageParam[]; filepath: string } | null {
+export function resumeSession(id: string): { messages: MessageParam[]; filepath: string; projectRoot: string } | null {
   let p = id;
   if (!p.endsWith('.json')) p += '.json';
   const fp = path.isAbsolute(p) ? p : path.join(SESSION_DIR, p);
-  const msgs = loadSession(fp);
-  return msgs ? { messages: msgs, filepath: fp } : null;
+  if (!existsSync(fp)) return null;
+  try {
+    const data = JSON.parse(readFileSync(fp, 'utf-8'));
+    const messages = (data.messages ?? null) as MessageParam[] | null;
+    if (!messages) return null;
+    return { messages, filepath: fp, projectRoot: String(data.projectRoot ?? '') };
+  } catch { return null; }
 }
 
 /** 恢复当前项目最近会话：优先 autosave（current_<hash>.json），否则最近的快照。 */
-export function resumeLatest(): { messages: MessageParam[]; filepath: string } | null {
+export function resumeLatest(): { messages: MessageParam[]; filepath: string; projectRoot: string } | null {
   const current = path.join(SESSION_DIR, `current_${PROJECT_HASH}.json`);
   if (existsSync(current)) {
-    const msgs = loadSession(current);
-    if (msgs) return { messages: msgs, filepath: current };
+    const r = resumeSession(current);
+    if (r) return r;
   }
   const latest = listSessions(20).find(s => s.is_current_project && !s.is_current);
   return latest ? resumeSession(latest.filename) : null;
@@ -215,6 +229,26 @@ export function rebuildCommitted(messages: MessageParam[]): CommittedItem[] {
 /** 恢复会话并把历史重建进 committed（启动 --resume / /load 共用）。 */
 export function applyResume(messages: MessageParam[]): void {
   for (const item of rebuildCommitted(messages)) commit(item);
+}
+
+/**
+ * 激活恢复的会话：若会话属于其他项目（projectRoot 与当前 cwd 不同），
+ * chdir 到该目录并刷新项目状态（autosave 路径 / 项目 hash），
+ * 再把消息注入上下文 + 历史重建进 committed。
+ * 调用方随后需自行刷新 meta.cwd 与项目级 skill（见 main.tsx / SessionPicker）。
+ */
+export function activateResume(resumed: { messages: MessageParam[]; projectRoot: string }): void {
+  const target = resumed.projectRoot;
+  if (target && target !== process.cwd()) {
+    try {
+      if (existsSync(target)) {
+        process.chdir(target);
+        refreshProject();
+      }
+    } catch { /* chdir 失败不阻断恢复 */ }
+  }
+  setMessages(resumed.messages);
+  applyResume(resumed.messages);
 }
 
 export function listSessions(limit = 10): SessionMeta[] {

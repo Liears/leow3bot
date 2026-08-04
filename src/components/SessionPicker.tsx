@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { ACCENT } from '../config.js';
-import { listSessions, resumeSession, applyResume } from '../session.js';
-import { setMessages } from '../agent.js';
-import { commit, setPhase } from '../store.js';
+import { ACCENT, getSkillDirs, MODEL } from '../config.js';
+import { listSessions, resumeSession, activateResume } from '../session.js';
+import { commit, setPhase, setMeta } from '../store.js';
+import { loadSkills, SKILLS_REGISTRY } from '../skills.js';
+import { TOOLS_REGISTRY } from '../tools.js';
 import { homedir } from 'node:os';
 
 // 交互式会话选择器（--resume 不带值 / 带值时直接恢复）：↑↓ 选择 · Enter 恢复 · Esc/q 新会话
@@ -19,11 +20,22 @@ export default function SessionPicker() {
       if (s) {
         const resumed = resumeSession(s.filename);
         if (resumed) {
-          setMessages(resumed.messages);
-          applyResume(resumed.messages);
+          // 与启动 --resume 一致：chdir 到会话所属项目 + 消息/历史恢复 + 刷新 meta 与项目级 skill
+          const prevCwd = process.cwd();
+          activateResume(resumed);
+          if (process.cwd() !== prevCwd) {
+            loadSkills(getSkillDirs()); // 项目级 skill 按新目录重扫
+            setMeta({
+              model: MODEL,
+              nTools: Object.keys(TOOLS_REGISTRY).length,
+              nSkills: SKILLS_REGISTRY.size,
+              cwd: process.cwd(),
+            });
+          }
           commit({
             kind: 'system', tone: 'ok',
-            text: `✓ 已恢复会话 ${s.filename}（${resumed.messages.length} 条消息）`,
+            text: `✓ 已恢复会话 ${s.filename}（${resumed.messages.length} 条消息）` +
+              (process.cwd() !== prevCwd ? `，工作目录已切换: ${process.cwd()}` : ''),
           });
         }
       }

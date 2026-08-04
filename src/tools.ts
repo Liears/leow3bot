@@ -28,12 +28,11 @@ export interface ToolDef {
 // 工具实现
 // ============================================================
 
-// bash 每次都在全新 shell 中执行，工作目录固定为启动目录（cd 不跨调用保留）。
-// 输出带 [cwd] 前缀 + 工具描述声明，避免模型因不知道当前目录而乱 cd / find / 全盘搜索。
-const BASH_CWD = process.cwd();
-
+// bash 每次都在全新 shell 中执行，工作目录 = 当前进程 cwd（--resume 恢复会话会切换，
+// 所以动态读取而非启动时固化）。输出带 [cwd] 前缀 + 工具描述声明，
+// 避免模型因不知道当前目录而乱 cd / find / 全盘搜索。
 async function runBash(command: string) {
-  const cwdTag = `[cwd: ${BASH_CWD}]`;
+  const cwdTag = `[cwd: ${process.cwd()}]`;
   try {
     const { stdout, stderr } = await execAsync(command, { timeout: 30_000, maxBuffer: 1024 * 1024 });
     let out = stdout;
@@ -159,7 +158,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: false,
     schema: {
       name: 'bash',
-      description: `在本地执行 shell 命令并返回输出。注意：工作目录固定为 ${BASH_CWD}（每次调用都是全新 shell，cd 不会跨调用保留），请使用绝对路径或 ${BASH_CWD} 下的相对路径`,
+      description: '在本地执行 shell 命令并返回输出。注意：工作目录为当前会话目录（见输出开头的 [cwd]；--resume 恢复会话时会切换到会话对应目录；每次调用都是全新 shell，cd 不会跨调用保留），请使用绝对路径或相对当前目录的路径',
       input_schema: { type: 'object', properties: { command: { type: 'string', description: '要执行的 shell 命令' } }, required: ['command'] },
     },
   },

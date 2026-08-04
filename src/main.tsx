@@ -9,19 +9,19 @@
 import React from 'react';
 import { render } from 'ink';
 import App from './components/App.js';
-import { commit, setMeta, setPhase } from './store.js';
+import { commit, setMeta, setPhase, getState } from './store.js';
 import { loadSkills, SKILLS_REGISTRY } from './skills.js';
-import { setSystem, buildSystem, setMessages } from './agent.js';
+import { setSystem, buildSystem } from './agent.js';
 import { getWelcomeItems } from './commands.js';
 import { TOOLS_REGISTRY } from './tools.js';
-import { SKILL_DIRS, MODEL } from './config.js';
-import { resumeSession, resumeLatest, applyResume } from './session.js';
+import { getSkillDirs, MODEL } from './config.js';
+import { resumeSession, resumeLatest, activateResume } from './session.js';
 import type { MessageParam } from './types.js';
 
 // —— 参数解析（仿 Claude Code）：--resume <id> / -r [id] / --continue / -c ——
 // -r 带值 → 按 ID 直接恢复；不带值 → 启动时弹交互式会话选择器
 const args = process.argv.slice(2);
-let resumed: { messages: MessageParam[]; filepath: string } | null = null;
+let resumed: { messages: MessageParam[]; filepath: string; projectRoot: string } | null = null;
 let picker = false;
 if (args[0] === '--resume' || args[0] === '-r') {
   const id = args[1];
@@ -42,7 +42,7 @@ if (args[0] === '--resume' || args[0] === '-r') {
   }
 }
 
-loadSkills(SKILL_DIRS);
+loadSkills(getSkillDirs());
 setSystem(buildSystem());
 
 setMeta({
@@ -54,12 +54,18 @@ setMeta({
 for (const item of getWelcomeItems()) commit(item);
 
 if (resumed) {
-  // 完全恢复：消息进上下文 + 历史重建进 committed（UI 可见，与流式渲染一致）
-  setMessages(resumed.messages);
-  applyResume(resumed.messages);
+  // 完全恢复：chdir 到会话所属项目（如不同）+ 消息进上下文 + 历史重建进 committed
+  const prevCwd = process.cwd();
+  activateResume(resumed);
+  const cwdChanged = process.cwd() !== prevCwd;
+  if (cwdChanged) {
+    loadSkills(getSkillDirs()); // 项目级 skill 按新目录重扫
+    setMeta({ model: MODEL, nTools: Object.keys(TOOLS_REGISTRY).length, nSkills: SKILLS_REGISTRY.size, cwd: process.cwd() }); // 状态栏显示新目录
+  }
   commit({
     kind: 'system', tone: 'ok',
-    text: `✓ 已恢复会话 ${resumed.filepath.split('/').pop()}（${resumed.messages.length} 条消息）`,
+    text: `✓ 已恢复会话 ${resumed.filepath.split('/').pop()}（${resumed.messages.length} 条消息）` +
+      (cwdChanged ? `，工作目录已切换: ${process.cwd()}` : ''),
   });
 } else if (picker) {
   setPhase('session_picker'); // render 前设置，App 首帧即选择器

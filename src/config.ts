@@ -113,11 +113,15 @@ export const LEOW3BOT_HOME = path.join(homedir(), '.leow3bot');
 //   1) ~/.claude/skills      —— Claude 用户级标准（`npx skills add` 默认装这）
 //   2) ~/.leow3bot/skills  —— leow3bot 自己的 home
 //   3) ./.claude/skills      —— 项目级（覆盖用户级）
-export const SKILL_DIRS = [
-  path.join(homedir(), '.claude', 'skills'),
-  path.join(LEOW3BOT_HOME, 'skills'),
-  path.join(process.cwd(), '.claude', 'skills'),
-];
+// 动态函数：--resume 恢复会话 chdir 后重算项目级目录（main.tsx / SessionPicker 调用）。
+export function getSkillDirs(): string[] {
+  return [
+    path.join(homedir(), '.claude', 'skills'),
+    path.join(LEOW3BOT_HOME, 'skills'),
+    path.join(process.cwd(), '.claude', 'skills'),
+  ];
+}
+export const SKILL_DIRS = getSkillDirs();
 export const SYSTEM_PROMPT = '';
 
 // CC 风格符号 + 主色
