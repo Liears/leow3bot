@@ -32,10 +32,10 @@ export default function App() {
   return (
     <Box flexDirection="column">
       {/* 已完成消息进原生 scrollback（只增）。Static 按数组长度增量渲染，
-          故 items 必须用 committed 原样（每行一条，长度单调递增）。
-          段内行距由当前行按 prevKind 自行决定（见 MessageList.lineMarginTop）。 */}
+          故 items 必须用 committed 原样（每行一条，长度单调递增）——任何
+          合并/过滤都会吞输出。行距统一见 MessageList.lineMarginTop。 */}
       <Static items={s.committed}>
-        {(item, i) => <MessageList key={i} item={item} prevKind={s.committed[i - 1]?.kind} />}
+        {(item, i) => <MessageList key={i} item={item} />}
       </Static>
 
       {/* 动态区：内容紧跟 Static（短对话跟在后、长对话由 scrollback 贴底）。

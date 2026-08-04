@@ -11,16 +11,14 @@ import { renderMarkdownLine, renderInline } from '../lib/markdown.js';
 //   段内行（前一行是同类型 assistant_line/thinking_line）→ marginTop 2
 //   块首行（user/tool_start/system/段落第一行）→ marginTop 1
 //   tool_result / logo → 0（紧贴所属块）
-function lineMarginTop(kind: CommittedItem['kind'], prevKind: CommittedItem['kind'] | undefined): number {
-  if (kind === 'assistant_line' || kind === 'thinking_line') {
-    return prevKind === kind ? 2 : 1;
-  }
-  if (kind === 'user' || kind === 'tool_start' || kind === 'system') return 1;
+function lineMarginTop(kind: CommittedItem['kind']): number {
+  // 统一空一行（段内行、块首行都 1）；tool_result / logo 紧贴所属块
+  if (kind === 'assistant_line' || kind === 'thinking_line' || kind === 'user' || kind === 'tool_start' || kind === 'system') return 1;
   return 0;
 }
 
-export default function MessageList({ item, prevKind }: { item: CommittedItem; prevKind?: CommittedItem['kind'] }) {
-  const mt = lineMarginTop(item.kind, prevKind);
+export default function MessageList({ item }: { item: CommittedItem }) {
+  const mt = lineMarginTop(item.kind);
   switch (item.kind) {
     case 'user':
       return (
