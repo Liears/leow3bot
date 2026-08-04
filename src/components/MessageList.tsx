@@ -9,12 +9,13 @@ export default function MessageList({ item }: { item: CommittedItem }) {
   switch (item.kind) {
     case 'user':
       return (
-        <Box>
+        <Box marginTop={1}>
           <Text color={ACCENT} bold>{SYM_USER} </Text>
           <Text color={ACCENT}>{item.text}</Text>
         </Box>
       );
     case 'assistant_line':
+      // 同一回复的连续行紧贴（段落感），不额外加间距
       return <Box>{renderMarkdownLine(item.text, item.code ?? false)}</Box>;
     case 'thinking_line':
       return (
@@ -26,7 +27,7 @@ export default function MessageList({ item }: { item: CommittedItem }) {
       );
     case 'tool_start':
       return (
-        <Box>
+        <Box marginTop={1}>
           <Text color={ACCENT} bold>{SYM_TOOL} {item.call.name} </Text>
           <Text dimColor>{summarizeInput(item.call.input)}</Text>
         </Box>
@@ -41,7 +42,7 @@ export default function MessageList({ item }: { item: CommittedItem }) {
     case 'system': {
       const color = item.tone === 'err' ? 'red' : item.tone === 'ok' ? 'green' : item.tone === 'warn' ? 'yellow' : undefined;
       return (
-        <Box>
+        <Box marginTop={1}>
           <Text color={color} dimColor={item.tone === 'muted'}>{item.text}</Text>
         </Box>
       );
