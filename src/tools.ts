@@ -3,11 +3,11 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile as fsReadFile, writeFile as fsWriteFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { IMAGE_EXTENSIONS, IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, IMAGE_TARGET_RAW_SIZE, MAX_BASH_OUTPUT_CHARS } from './config.js';
-import { truncateMiddle } from './lib/format.js';
 import { getSkillPrompt, SKILLS_REGISTRY } from './skills.js';
 import { commit, setPhase, setAskResolver } from './store.js';
 import { searchWeb, readUrl } from './websearch.js';
@@ -32,21 +32,50 @@ export interface ToolDef {
 // bash 每次都在全新 shell 中执行，工作目录 = 当前进程 cwd（--resume 恢复会话会切换，
 // 所以动态读取而非启动时固化）。输出带 [cwd] 前缀 + 工具描述声明，
 // 避免模型因不知道当前目录而乱 cd / find / 全盘搜索。
+//
+// 超长输出策略（对齐 Claude Code）：只保留头部 + 告诉模型截掉了多少行，
+// 完整内容落盘到系统临时目录，tool_result 带路径——模型需要时用 read 工具取回，
+// 截断只是"默认展示窗口"，信息不丢失。
+const BASH_OUT_DIR = path.join(
+  tmpdir(),
+  `leow3bot-${typeof process.getuid === 'function' ? process.getuid() : 0}`,
+); // /tmp/leow3bot-{uid}/，多用户共享 /tmp 防权限冲突（对齐 CC 的 claude-{uid}）
+
+function saveBashOutput(full: string): string {
+  try {
+    mkdirSync(BASH_OUT_DIR, { recursive: true });
+    const fp = path.join(BASH_OUT_DIR, `bash-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+    writeFileSync(fp, full, 'utf-8');
+    return fp;
+  } catch { return ''; } // 落盘失败不阻断返回（仅无取回路径）
+}
+
 async function runBash(command: string) {
   const cwdTag = `[cwd: ${process.cwd()}]`;
-  const clamp = (s: string) => truncateMiddle(s, MAX_BASH_OUTPUT_CHARS);
+  const finish = (out: string) => {
+    let body = out;
+    if (body.length > MAX_BASH_OUTPUT_CHARS) {
+      const remainingLines = body.slice(MAX_BASH_OUTPUT_CHARS).split('\n').length; // 被截掉的行数
+      const saved = saveBashOutput(body);
+      body =
+        body.slice(0, MAX_BASH_OUTPUT_CHARS) +
+        `\n\n... [${remainingLines} lines truncated] ...` +
+        (saved ? `\n完整输出已保存: ${saved}（可用 read 工具读取）` : '');
+    }
+    return { type: 'bash' as const, command, output: body };
+  };
   try {
-    const { stdout, stderr } = await execAsync(command, { timeout: 30_000, maxBuffer: 1024 * 1024 });
+    const { stdout, stderr } = await execAsync(command, { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
     let out = stdout;
     if (stderr) out += '\n[stderr] ' + stderr;
-    return { type: 'bash' as const, command, output: clamp(cwdTag + '\n' + (out || '(无输出)')) };
+    return finish(cwdTag + '\n' + (out || '(无输出)'));
   } catch (e: unknown) {
     const err = e as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
     if (err.killed) return { type: 'bash' as const, command, output: cwdTag + '\n错误：命令执行超时（30秒）' };
     let out = err.stdout || '';
     if (err.stderr) out += '\n[stderr] ' + err.stderr;
     if (err.code) out += `\n[exit code: ${err.code}]`;
-    return { type: 'bash' as const, command, output: clamp(cwdTag + '\n' + (out || err.message || String(e))) };
+    return finish(cwdTag + '\n' + (out || err.message || String(e)));
   }
 }
 

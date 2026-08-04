@@ -98,7 +98,18 @@ export const TOP_P: number | null = null;
 export const TOP_K: number | null = null;
 export const MAX_CONCURRENT_TOOLS = 10;
 export const MAX_TOOL_RESULT_CHARS = 16000;      // read/write/skill 等工具结果上限（截断保留首尾）
-export const MAX_BASH_OUTPUT_CHARS = 16000;      // bash 输出上限（截断保留首尾）
+
+// bash 输出上限（对齐 Claude Code）：默认 30000 字符，可用环境变量
+// BASH_MAX_OUTPUT_LENGTH 调整（上限 150000，与 CC 的 outputLimits 一致）。
+// 超限输出只保留头部 + 行数提示，完整内容落盘供 read 工具取回。
+function boundedIntFromEnv(name: string, def: number, upper: number): number {
+  const v = process.env[name];
+  if (!v) return def;
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(Math.max(1, n), upper);
+}
+export const MAX_BASH_OUTPUT_CHARS = boundedIntFromEnv('BASH_MAX_OUTPUT_LENGTH', 30000, 150000);
 export const MAX_TOOL_ROUNDS = 100;
 export const API_TIMEOUT = 600; // 秒
 
