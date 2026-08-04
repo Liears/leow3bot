@@ -5,62 +5,35 @@ import { SYM_USER, SYM_TOOL, SYM_RESULT, SYM_THINK, ACCENT } from '../config.js'
 import { gradientHex } from '../lib/format.js';
 import { renderMarkdownLine, renderInline } from '../lib/markdown.js';
 
-// 渲染分组：流式按行 commit，同一回复的连续 assistant_line / thinking_line
-// 合并成一个段落，段内每行加 gap（行距），段与段之间由 marginTop 分隔。
-export type GroupedItem =
-  | { kind: 'para'; sub: 'assistant' | 'thinking'; lines: Array<{ text: string; code?: boolean }> }
-  | CommittedItem;
-
-export function groupCommitted(items: CommittedItem[]): GroupedItem[] {
-  const out: GroupedItem[] = [];
-  for (const it of items) {
-    const last = out[out.length - 1];
-    if (it.kind === 'assistant_line' && last && last.kind === 'para' && last.sub === 'assistant') {
-      last.lines.push({ text: it.text, code: it.code ?? false });
-    } else if (it.kind === 'thinking_line' && last && last.kind === 'para' && last.sub === 'thinking') {
-      last.lines.push({ text: it.text });
-    } else if (it.kind === 'assistant_line') {
-      out.push({ kind: 'para', sub: 'assistant', lines: [{ text: it.text, code: it.code ?? false }] });
-    } else if (it.kind === 'thinking_line') {
-      out.push({ kind: 'para', sub: 'thinking', lines: [{ text: it.text }] });
-    } else {
-      out.push(it);
-    }
+// 行距规则（Static 增量渲染只渲染新行、不更新旧行，所以每行只能靠自己的
+// marginTop 与上一行拉开距离，不能合并分组——合并会让数组长度不变、
+// Static 认为无新内容导致新行永不渲染）：
+//   段内行（前一行是同类型 assistant_line/thinking_line）→ marginTop 2
+//   块首行（user/tool_start/system/段落第一行）→ marginTop 1
+//   tool_result / logo → 0（紧贴所属块）
+function lineMarginTop(kind: CommittedItem['kind'], prevKind: CommittedItem['kind'] | undefined): number {
+  if (kind === 'assistant_line' || kind === 'thinking_line') {
+    return prevKind === kind ? 2 : 1;
   }
-  return out;
+  if (kind === 'user' || kind === 'tool_start' || kind === 'system') return 1;
+  return 0;
 }
 
-export default function MessageList({ item }: { item: GroupedItem }) {
-  // 段落：同一回复的连续行，行与行之间空一行（gap），不再是紧贴的密排
-  if (item.kind === 'para') {
-    if (item.sub === 'assistant') {
-      return (
-        <Box flexDirection="column" gap={2}>
-          {item.lines.map((l, i) => <Box key={i}>{renderMarkdownLine(l.text, l.code ?? false)}</Box>)}
-        </Box>
-      );
-    }
-    return (
-      <Box flexDirection="column" gap={2}>
-        {item.lines.map((l, i) => (
-          <Text key={i} dimColor italic>{i === 0 ? `${SYM_THINK} ` : '  '}{renderInline(l.text)}</Text>
-        ))}
-      </Box>
-    );
-  }
-
+export default function MessageList({ item, prevKind }: { item: CommittedItem; prevKind?: CommittedItem['kind'] }) {
+  const mt = lineMarginTop(item.kind, prevKind);
   switch (item.kind) {
     case 'user':
       return (
-        <Box marginTop={1}>
+        <Box marginTop={mt}>
           <Text color={ACCENT} bold>{SYM_USER} </Text>
           <Text color={ACCENT}>{item.text}</Text>
         </Box>
       );
+    case 'assistant_line':
+      return <Box marginTop={mt}>{renderMarkdownLine(item.text, item.code ?? false)}</Box>;
     case 'thinking_line':
-      // 正常不会走到（thinking_line 已被分组）；兜底渲染
       return (
-        <Box flexDirection="column">
+        <Box flexDirection="column" marginTop={mt}>
           {item.text.split('\n').map((l, i) => (
             <Text key={i} dimColor italic>{i === 0 ? `${SYM_THINK} ` : '  '}{renderInline(l)}</Text>
           ))}
