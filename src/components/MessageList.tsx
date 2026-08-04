@@ -9,7 +9,7 @@ export default function MessageList({ item }: { item: CommittedItem }) {
   switch (item.kind) {
     case 'user':
       return (
-        <Box marginTop={1}>
+        <Box marginTop={2}>
           <Text color={ACCENT} bold>{SYM_USER} </Text>
           <Text color={ACCENT}>{item.text}</Text>
         </Box>
@@ -27,7 +27,7 @@ export default function MessageList({ item }: { item: CommittedItem }) {
       );
     case 'tool_start':
       return (
-        <Box marginTop={1}>
+        <Box marginTop={2}>
           <Text color={ACCENT} bold>{SYM_TOOL} {item.call.name} </Text>
           <Text dimColor>{summarizeInput(item.call.input)}</Text>
         </Box>
@@ -42,7 +42,7 @@ export default function MessageList({ item }: { item: CommittedItem }) {
     case 'system': {
       const color = item.tone === 'err' ? 'red' : item.tone === 'ok' ? 'green' : item.tone === 'warn' ? 'yellow' : undefined;
       return (
-        <Box marginTop={1}>
+        <Box marginTop={2}>
           <Text color={color} dimColor={item.tone === 'muted'}>{item.text}</Text>
         </Box>
       );
