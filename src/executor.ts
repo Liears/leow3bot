@@ -2,6 +2,7 @@
 
 import { TOOLS_REGISTRY } from './tools.js';
 import { MAX_TOOL_RESULT_CHARS, WEB_RESULT_MAX_CHARS } from './config.js';
+import { truncateMiddle } from './lib/format.js';
 import { checkPermission, confirmAction, getPermissionTarget } from './permissions.js';
 import type { ToolCall, ToolResultBlock, MessageParam } from './types.js';
 
@@ -75,7 +76,7 @@ export function buildToolResultBlock(tc: ToolCall, result: unknown): ToolResultB
   if (r && r.type === 'text') {
     let content = r.content ?? '';
     if (content.length > MAX_TOOL_RESULT_CHARS) {
-      content = content.slice(0, MAX_TOOL_RESULT_CHARS) + `\n\n[文件内容过大，已截断。完整内容共 ${r.content?.length ?? 0} 字符]`;
+      content = truncateMiddle(content, MAX_TOOL_RESULT_CHARS) + `\n[完整内容共 ${r.content?.length ?? 0} 字符]`;
     }
     return { type: 'tool_result', tool_use_id: toolUseId, content };
   }
@@ -107,7 +108,7 @@ export function buildToolResultBlock(tc: ToolCall, result: unknown): ToolResultB
     return { type: 'tool_result', tool_use_id: toolUseId, content: wf.content ?? wf.output ?? '读取失败' };
   }
   let raw = String(result);
-  if (raw.length > MAX_TOOL_RESULT_CHARS) raw = raw.slice(0, MAX_TOOL_RESULT_CHARS) + '\n\n[输出已截断]';
+  if (raw.length > MAX_TOOL_RESULT_CHARS) raw = truncateMiddle(raw, MAX_TOOL_RESULT_CHARS);
   return { type: 'tool_result', tool_use_id: toolUseId, content: raw };
 }
 

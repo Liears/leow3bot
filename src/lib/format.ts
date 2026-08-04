@@ -38,3 +38,17 @@ function hexToRgb(h: string): [number, number, number] {
 function rgbToHex(r: number, g: number, b: number): string {
   return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
 }
+
+// 长文本截断：保留头部 + 尾部（中间省略）。长命令输出/文件内容的
+// 开头（命令上下文）与结尾（错误、结束状态）比中间更有价值。
+export function truncateMiddle(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const headLen = Math.floor(max * 0.6);
+  const tailLen = Math.max(10, max - headLen - 1);
+  const omitted = text.length - max;
+  return (
+    text.slice(0, headLen) +
+    `\n\n…[中间省略 ${omitted} 字符，可用 head/tail/grep 定向获取]…\n\n` +
+    text.slice(-tailLen)
+  );
+}

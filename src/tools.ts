@@ -6,7 +6,8 @@ import { readFile as fsReadFile, writeFile as fsWriteFile, mkdir } from 'node:fs
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
-import { IMAGE_EXTENSIONS, IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, IMAGE_TARGET_RAW_SIZE } from './config.js';
+import { IMAGE_EXTENSIONS, IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, IMAGE_TARGET_RAW_SIZE, MAX_BASH_OUTPUT_CHARS } from './config.js';
+import { truncateMiddle } from './lib/format.js';
 import { getSkillPrompt, SKILLS_REGISTRY } from './skills.js';
 import { commit, setPhase, setAskResolver } from './store.js';
 import { searchWeb, readUrl } from './websearch.js';
@@ -33,18 +34,19 @@ export interface ToolDef {
 // 避免模型因不知道当前目录而乱 cd / find / 全盘搜索。
 async function runBash(command: string) {
   const cwdTag = `[cwd: ${process.cwd()}]`;
+  const clamp = (s: string) => truncateMiddle(s, MAX_BASH_OUTPUT_CHARS);
   try {
     const { stdout, stderr } = await execAsync(command, { timeout: 30_000, maxBuffer: 1024 * 1024 });
     let out = stdout;
     if (stderr) out += '\n[stderr] ' + stderr;
-    return { type: 'bash' as const, command, output: (cwdTag + '\n' + (out || '(无输出)')).slice(0, 2000) };
+    return { type: 'bash' as const, command, output: clamp(cwdTag + '\n' + (out || '(无输出)')) };
   } catch (e: unknown) {
     const err = e as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
     if (err.killed) return { type: 'bash' as const, command, output: cwdTag + '\n错误：命令执行超时（30秒）' };
     let out = err.stdout || '';
     if (err.stderr) out += '\n[stderr] ' + err.stderr;
     if (err.code) out += `\n[exit code: ${err.code}]`;
-    return { type: 'bash' as const, command, output: (cwdTag + '\n' + (out || err.message || String(e))).slice(0, 2000) };
+    return { type: 'bash' as const, command, output: clamp(cwdTag + '\n' + (out || err.message || String(e))) };
   }
 }
 

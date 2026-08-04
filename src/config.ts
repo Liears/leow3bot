@@ -97,7 +97,8 @@ export function getWebApiKey(): string {
 export const TOP_P: number | null = null;
 export const TOP_K: number | null = null;
 export const MAX_CONCURRENT_TOOLS = 10;
-export const MAX_TOOL_RESULT_CHARS = 8000;
+export const MAX_TOOL_RESULT_CHARS = 16000;      // read/write/skill 等工具结果上限（截断保留首尾）
+export const MAX_BASH_OUTPUT_CHARS = 16000;      // bash 输出上限（截断保留首尾）
 export const MAX_TOOL_ROUNDS = 100;
 export const API_TIMEOUT = 600; // 秒
 
