@@ -153,6 +153,7 @@ export function repairInterruptedToolCalls(messages: MessageParam[]): void {
 
 // 多轮工具循环（对齐 Python process_user_turn）
 async function runTurn(ref: { current: AbortController | null }): Promise<void> {
+  setError(null); // 新回合清除上一轮的错误提示（此前设置后永不清除，红字常驻）
   stripHistoricalThinking(messages);
   repairInterruptedToolCalls(messages);
   let round = 0;
