@@ -13,7 +13,8 @@ import { commit, setMeta, setPhase } from './store.js';
 import { loadSkills, SKILLS_REGISTRY } from './skills.js';
 import { setSystem, buildSystem } from './agent.js';
 import { getWelcomeItems } from './commands.js';
-import { TOOLS_REGISTRY } from './tools.js';
+import { TOOLS_REGISTRY, disableTool } from './tools.js';
+import { searchWeb } from './websearch.js';
 import { getSkillDirs, MODEL } from './config.js';
 import { resumeSession, resumeLatest, activateResume, setSessionTitle } from './session.js';
 import { initTitleState } from './title.js';
@@ -74,5 +75,24 @@ if (resumed) {
 } else if (picker) {
   setPhase('session_picker'); // render 前设置，App 首帧即选择器
 }
+
+// web_search 可用性探测（fire-and-forget 不阻塞启动）：不可用则从工具集移除，
+// 避免模型反复调用 401 失败（搜索端点固定智谱，非智谱 key 配置下必失败）。
+void (async () => {
+  try {
+    const r = await searchWeb('连通性检测', { count: 1 });
+    const ok = String(r.output ?? '').startsWith('搜索 "');
+    if (!ok && disableTool('web_search')) {
+      commit({
+        kind: 'system', tone: 'warn',
+        text: `⚠️ web_search 不可用（${String(r.output ?? '').slice(0, 60)}）——已从工具集移除。如需联网搜索，请在 config.json 配置智谱 webApiKey`,
+      });
+    }
+  } catch {
+    if (disableTool('web_search')) {
+      commit({ kind: 'system', tone: 'warn', text: '⚠️ web_search 不可用（网络异常）——已从工具集移除' });
+    }
+  }
+})();
 
 render(React.createElement(App));

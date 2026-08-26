@@ -3,11 +3,11 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile as fsReadFile, writeFile as fsWriteFile, mkdir } from 'node:fs/promises';
-import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { IMAGE_EXTENSIONS, IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, IMAGE_TARGET_RAW_SIZE, MAX_BASH_OUTPUT_CHARS } from './config.js';
+import { persistToolOutput } from './lib/persist.js';
 import { getSkillPrompt, SKILLS_REGISTRY } from './skills.js';
 import { commit, setPhase, setAskResolver } from './store.js';
 import { searchWeb, readUrl } from './websearch.js';
@@ -34,35 +34,17 @@ export interface ToolDef {
 // 避免模型因不知道当前目录而乱 cd / find / 全盘搜索。
 //
 // 超长输出策略（对齐 Claude Code）：只保留头部 + 告诉模型截掉了多少行，
-// 完整内容落盘到系统临时目录，tool_result 带路径——模型需要时用 read 工具取回，
-// 截断只是"默认展示窗口"，信息不丢失。
-const BASH_OUT_DIR = path.join(
-  tmpdir(),
-  `leow3bot-${typeof process.getuid === 'function' ? process.getuid() : 0}`,
-); // /tmp/leow3bot-{uid}/，多用户共享 /tmp 防权限冲突（对齐 CC 的 claude-{uid}）
+// 完整内容落盘到系统临时目录（lib/persist.ts，与 web_fetch 共用），
+// tool_result 带路径——模型需要时用 read 工具取回，截断只是"默认展示窗口"。
 
-// 落盘时顺带清理超过 24h 的旧输出文件（WSL2 的 /tmp 不随重启清理，防目录无限增长）
-function saveBashOutput(full: string): string {
-  try {
-    mkdirSync(BASH_OUT_DIR, { recursive: true });
-    const cutoff = Date.now() - 24 * 3600 * 1000;
-    for (const f of readdirSync(BASH_OUT_DIR)) {
-      const fp = path.join(BASH_OUT_DIR, f);
-      try { if (statSync(fp).mtimeMs < cutoff) unlinkSync(fp); } catch { /* noop */ }
-    }
-    const fp = path.join(BASH_OUT_DIR, `bash-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-    writeFileSync(fp, full, 'utf-8');
-    return fp;
-  } catch { return ''; } // 落盘失败不阻断返回（仅无取回路径）
-}
-
-async function runBash(command: string) {
+async function runBash(command: string, timeoutSec?: number) {
   const cwdTag = `[cwd: ${process.cwd()}]`;
+  const timeoutMs = Math.min(300, Math.max(5, Math.floor(timeoutSec ?? 60))) * 1000; // 钳制 5-300s，默认 60s
   const finish = (out: string) => {
     let body = out;
     if (body.length > MAX_BASH_OUTPUT_CHARS) {
       const remainingLines = body.slice(MAX_BASH_OUTPUT_CHARS).split('\n').length; // 被截掉的行数
-      const saved = saveBashOutput(body);
+      const saved = persistToolOutput('bash-out', body);
       body =
         body.slice(0, MAX_BASH_OUTPUT_CHARS) +
         `\n\n... [${remainingLines} lines truncated] ...` +
@@ -71,13 +53,13 @@ async function runBash(command: string) {
     return { type: 'bash' as const, command, output: body };
   };
   try {
-    const { stdout, stderr } = await execAsync(command, { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    const { stdout, stderr } = await execAsync(command, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
     let out = stdout;
     if (stderr) out += '\n[stderr] ' + stderr;
     return finish(cwdTag + '\n' + (out || '(无输出)'));
   } catch (e: unknown) {
     const err = e as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
-    if (err.killed) return { type: 'bash' as const, command, output: cwdTag + '\n错误：命令执行超时（30秒）' };
+    if (err.killed) return { type: 'bash' as const, command, output: cwdTag + `\n错误：命令执行超时（${timeoutMs / 1000}秒，可用 timeout 参数延长至最多 300 秒，或用 nohup ... & 转后台）` };
     let out = err.stdout || '';
     if (err.stderr) out += '\n[stderr] ' + err.stderr;
     if (err.code) out += `\n[exit code: ${err.code}]`;
@@ -115,30 +97,60 @@ export async function compressImage(raw: Buffer, ext: string): Promise<{ data: B
   return { data: d, mediaType: 'image/jpeg' };
 }
 
+// 本会话 read/edit/write 过的文件（绝对路径）。write 盲覆盖守卫用：
+// 已存在但从未读过的文件不允许直接 write（对齐 CC readFileState）。
+const READ_KNOWN_FILES = new Set<string>();
+
 // read：读取文本文件，支持 offset/limit 行范围分页（对齐 CC FileReadTool）。
-// 大文件不截断——默认读前 400 行，未读完返回提示用 offset 续读。
-// 图片已分离到 view 工具（职责分离：文本 read / 视觉 view，对齐 Codex view_image）。
+// 输出带行号（cat -n 风格，便于 edit 协调与错误定位）；页内容受字符预算约束
+// （单行过长/页超预算时提前截断并明确提示——不让执行器截断"撒谎"）。
 async function readFile(p: string, offset = 1, limit?: number) {
   const ext = path.extname(p).toLowerCase();
   if (IMAGE_EXTENSIONS.includes(ext)) {
     return { type: 'error' as const, message: `"${p}" 是图片文件（${ext}），请使用 view 工具查看图片` };
   }
   try {
+    const st = statSync(p);
+    if (st.size > 10 * 1024 * 1024) {
+      return { type: 'error' as const, message: `文件过大（${(st.size / 1024 / 1024).toFixed(1)} MB）。请用 offset/limit 分段读，或用 bash 的 grep/head/tail 定向读取` };
+    }
     const content = await fsReadFile(p, 'utf-8');
     const lines = content.split('\n');
     const total = lines.length;
-    const pageSize = Math.max(1, Math.floor(limit ?? 400)); // limit ≤ 0 钳制为 1，防空页死循环
+    const pageSize = Math.max(1, Math.floor(limit ?? 200)); // limit ≤ 0 钳制为 1，防空页死循环
     const start = Math.max(0, offset - 1);
     if (start >= total) {
       return { type: 'text' as const, content: `[offset=${offset} 超出文件总行数 ${total}，请用较小的 offset]` };
     }
     const page = lines.slice(start, start + pageSize);
-    let out = page.join('\n');
-    if (start + pageSize < total) {
-      const end = start + page.length;
-      out += `\n\n[已读第 ${start + 1}-${end} 行，共 ${total} 行；继续请用 offset=${end + 1}]`;
+    const width = String(total).length;
+    const MAX_PAGE_CHARS = 14000; // 页字符预算（留余量给续读提示，不触发执行器 16K 截断）
+    const out: string[] = [];
+    let chars = 0;
+    let shown = 0;
+    for (let i = 0; i < page.length; i++) {
+      const line = `${String(start + i + 1).padStart(width)}  ${page[i]}`;
+      if (chars + line.length + 1 > MAX_PAGE_CHARS) {
+        if (shown === 0 && page[i].length > MAX_PAGE_CHARS) {
+          // 首行单行即超预算（如 minified 文件）：截断显示该行片段并标注
+          out.push(line.slice(0, MAX_PAGE_CHARS) + ` …[第 ${start + 1} 行单行过长（${page[i].length} 字符），已截断显示]`);
+          shown = 1;
+        }
+        break;
+      }
+      out.push(line);
+      chars += line.length + 1;
+      shown++;
     }
-    return { type: 'text' as const, content: out };
+    let text = out.join('\n');
+    const lastShown = start + shown; // 实际展示到的行号
+    if (shown < page.length) {
+      text += `\n\n[本页在第 ${lastShown} 行截断（单行过长或超页字符预算），可用 offset=${lastShown + 1} 与更小的 limit 续读]`;
+    } else if (start + pageSize < total) {
+      text += `\n\n[已读第 ${start + 1}-${lastShown} 行，共 ${total} 行；继续请用 offset=${lastShown + 1}]`;
+    }
+    READ_KNOWN_FILES.add(path.resolve(p));
+    return { type: 'text' as const, content: text };
   } catch (e) {
     return { type: 'error' as const, message: `错误：${(e as Error).message}` };
   }
@@ -164,8 +176,14 @@ async function viewImage(p: string) {
 
 async function writeFile(p: string, content: string) {
   try {
+    // 盲覆盖守卫（对齐 CC readFileState）：已存在但本会话从未 read/edit/write 过的文件，
+    // 不允许直接整文件覆盖——防止模型没读过就重写、摧毁未知内容。先 read 确认后再 write。
+    if (existsSync(p) && !READ_KNOWN_FILES.has(path.resolve(p))) {
+      return `错误：文件已存在且本会话尚未读取过 ${p}。为防止覆盖未知内容，请先用 read 工具读取确认后再 write（局部修改建议用 edit）`;
+    }
     await mkdir(path.dirname(p) || '.', { recursive: true });
     await fsWriteFile(p, content, 'utf-8');
+    READ_KNOWN_FILES.add(path.resolve(p)); // 自己写的文件内容已知
     return `成功写入 ${p}（${content.length} 字符）`;
   } catch (e) {
     return `错误：${(e as Error).message}`;
@@ -188,6 +206,7 @@ async function editFile(p: string, oldString: string, newString: string, replace
   if (count > 1 && !replaceAll) return `错误：找到 ${count} 处匹配，请提供更多上下文或设置 replace_all=true`;
   const newContent = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString);
   await fsWriteFile(p, newContent, 'utf-8');
+  READ_KNOWN_FILES.add(path.resolve(p)); // edit 成功 = 已知文件内容
   return `成功编辑 ${p}（替换 ${replaceAll ? count : 1} 处）`;
 }
 
@@ -217,12 +236,19 @@ async function askUser(question: string): Promise<string> {
 
 export const TOOLS_REGISTRY: Record<string, ToolDef> = {
   bash: {
-    function: (a) => runBash(a.command as string),
+    function: (a) => runBash(a.command as string, a.timeout as number | undefined),
     concurrencySafe: false,
     schema: {
       name: 'bash',
-      description: '在本地执行 shell 命令并返回输出。注意：工作目录为当前会话目录（见输出开头的 [cwd]；--resume 恢复会话时会切换到会话对应目录；每次调用都是全新 shell，cd 不会跨调用保留），请使用绝对路径或相对当前目录的路径',
-      input_schema: { type: 'object', properties: { command: { type: 'string', description: '要执行的 shell 命令' } }, required: ['command'] },
+      description: '在本地执行 shell 命令并返回输出。注意：工作目录为当前会话目录（见输出开头的 [cwd]；--resume 恢复会话时会切换到会话对应目录；每次调用都是全新 shell，cd 不会跨调用保留），请使用绝对路径或相对当前目录的路径。长耗时命令（脚本/训练/安装）请传 timeout（秒，5-300，默认 60）；超过 300 秒的用 nohup ... & 转后台',
+      input_schema: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: '要执行的 shell 命令' },
+          timeout: { type: 'number', description: '超时秒数（5-300，默认 60）。长耗时命令按预估耗时设置' },
+        },
+        required: ['command'],
+      },
     },
   },
   read: {
@@ -230,13 +256,13 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: true,
     schema: {
       name: 'read',
-      description: '读取文本文件内容。支持行范围分页：offset=起始行（从 1 开始，默认 1）、limit=读取行数（默认 400）；未读完会提示用 offset 续读。图片文件请用 view 工具查看',
+      description: '读取文本文件内容（输出带行号）。支持行范围分页：offset=起始行（从 1 开始，默认 1）、limit=读取行数（默认 200）；未读完会提示用 offset 续读。图片文件请用 view 工具查看',
       input_schema: {
         type: 'object',
         properties: {
           path: { type: 'string', description: '文件路径' },
           offset: { type: 'number', description: '起始行号（从 1 开始，默认 1）' },
-          limit: { type: 'number', description: '读取行数（默认 400；未读完会提示续读 offset）' },
+          limit: { type: 'number', description: '读取行数（默认 200；未读完会提示续读 offset）' },
         },
         required: ['path'],
       },
@@ -260,7 +286,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: false,
     schema: {
       name: 'edit',
-      description: '对文件执行精确的文本替换。old_string 必须在文件中唯一（除非 replace_all=true）。',
+      description: '对文件执行精确的文本替换。old_string 必须在文件中唯一（除非 replace_all=true）。文件不存在且 old_string 为空字符串时可创建新文件（等价 write）。',
       input_schema: {
         type: 'object',
         properties: {
@@ -284,7 +310,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
   },
   skill: {
     function: (a) => runSkill(a.name as string, a.args as string | undefined),
-    concurrencySafe: false,
+    concurrencySafe: true, // 纯读取（注册表查询 + 文本替换），无副作用，可与 read 等并行
     schema: {
       name: 'skill',
       description: '执行指定名称的 skill，返回 skill 的详细指引。可用 skill 列表见系统提示。',
@@ -345,3 +371,13 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
 };
 
 export const TOOLS_SCHEMAS: ToolSchema[] = Object.values(TOOLS_REGISTRY).map(t => t.schema);
+
+/** 运行时移除工具（如 web_search 探测不可用）：删注册表 + 原地 splice schema 数组
+ * （TOOLS_SCHEMAS 被 agent 按引用每轮使用，splice 后立即生效）。 */
+export function disableTool(name: string): boolean {
+  if (!(name in TOOLS_REGISTRY)) return false;
+  delete TOOLS_REGISTRY[name];
+  const i = TOOLS_SCHEMAS.findIndex(s => s.name === name);
+  if (i >= 0) TOOLS_SCHEMAS.splice(i, 1);
+  return true;
+}

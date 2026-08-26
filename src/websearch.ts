@@ -11,6 +11,7 @@ import {
   WEB_RESULT_MAX_CHARS,
   getWebApiKey,
 } from './config.js';
+import { persistToolOutput } from './lib/persist.js';
 import TurndownService from 'turndown';
 // 注：turndown 内部依赖 @mixmark-io/domino 解析 HTML，无需直接 import（其 .d.ts 声明的是 'domino' 裸模块，与包名不匹配）
 
@@ -159,9 +160,13 @@ function isSameHostRedirect(from: string, to: string): boolean {
 }
 
 function truncateForOutput(s: string): string {
-  return s.length > WEB_RESULT_MAX_CHARS
-    ? s.slice(0, WEB_RESULT_MAX_CHARS) + `\n\n[内容过长，已截断。完整共 ${s.length} 字符]`
-    : s;
+  if (s.length <= WEB_RESULT_MAX_CHARS) return s;
+  const saved = persistToolOutput('webfetch', s);
+  return (
+    s.slice(0, WEB_RESULT_MAX_CHARS) +
+    `\n\n[内容过长，已截断。完整共 ${s.length} 字符` +
+    (saved ? `，已保存至 ${saved}（可用 read 工具读取）` : '') + `]`
+  );
 }
 
 function decodeEntities(s: string): string {
