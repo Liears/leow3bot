@@ -115,21 +115,13 @@ export async function compressImage(raw: Buffer, ext: string): Promise<{ data: B
   return { data: d, mediaType: 'image/jpeg' };
 }
 
-// read：支持 offset/limit 行范围读取（对齐 Claude Code 的 FileReadTool）。
-// 大文件不截断——默认读前 400 行，未读完返回提示用 offset 续读，
-// 模型分页取完整内容，信息不丢、完全掌控。
+// read：读取文本文件，支持 offset/limit 行范围分页（对齐 CC FileReadTool）。
+// 大文件不截断——默认读前 400 行，未读完返回提示用 offset 续读。
+// 图片已分离到 view 工具（职责分离：文本 read / 视觉 view，对齐 Codex view_image）。
 async function readFile(p: string, offset = 1, limit?: number) {
   const ext = path.extname(p).toLowerCase();
   if (IMAGE_EXTENSIONS.includes(ext)) {
-    try {
-      const data = await fsReadFile(p);
-      const { data: compressed, mediaType } = await compressImage(data, ext);
-      const b64 = compressed.toString('base64');
-      const size = `${data.length} → ${compressed.length} bytes` + (compressed.length !== data.length ? ' (压缩后)' : '');
-      return { type: 'image' as const, path: p, media_type: mediaType, base64: b64, size };
-    } catch (e) {
-      return { type: 'error' as const, message: `错误：${(e as Error).message}` };
-    }
+    return { type: 'error' as const, message: `"${p}" 是图片文件（${ext}），请使用 view 工具查看图片` };
   }
   try {
     const content = await fsReadFile(p, 'utf-8');
@@ -147,6 +139,24 @@ async function readFile(p: string, offset = 1, limit?: number) {
       out += `\n\n[已读第 ${start + 1}-${end} 行，共 ${total} 行；继续请用 offset=${end + 1}]`;
     }
     return { type: 'text' as const, content: out };
+  } catch (e) {
+    return { type: 'error' as const, message: `错误：${(e as Error).message}` };
+  }
+}
+
+// view：查看图片（视觉输入）。压缩限尺寸后以 image 块返回（上限 2000×2000，
+// 对齐 CC 的 ingest 约束）。后续图片生命周期管理（热/冷分层、驱逐）锚定本工具。
+async function viewImage(p: string) {
+  const ext = path.extname(p).toLowerCase();
+  if (!IMAGE_EXTENSIONS.includes(ext)) {
+    return { type: 'error' as const, message: `"${p}" 不是图片文件（${ext || '无扩展名'}），请使用 read 工具读取文本` };
+  }
+  try {
+    const data = await fsReadFile(p);
+    const { data: compressed, mediaType } = await compressImage(data, ext);
+    const b64 = compressed.toString('base64');
+    const size = `${data.length} → ${compressed.length} bytes` + (compressed.length !== data.length ? ' (压缩后)' : '');
+    return { type: 'image' as const, path: p, media_type: mediaType, base64: b64, size };
   } catch (e) {
     return { type: 'error' as const, message: `错误：${(e as Error).message}` };
   }
@@ -220,7 +230,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: true,
     schema: {
       name: 'read',
-      description: '读取指定路径的文件内容（支持文本和图片）。大文件支持行范围读取：offset=起始行（从 1 开始，默认 1）、limit=读取行数（默认 400）；未读完会返回提示，用 offset 参数续读下一页',
+      description: '读取文本文件内容。支持行范围分页：offset=起始行（从 1 开始，默认 1）、limit=读取行数（默认 400）；未读完会提示用 offset 续读。图片文件请用 view 工具查看',
       input_schema: {
         type: 'object',
         properties: {
@@ -228,6 +238,19 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
           offset: { type: 'number', description: '起始行号（从 1 开始，默认 1）' },
           limit: { type: 'number', description: '读取行数（默认 400；未读完会提示续读 offset）' },
         },
+        required: ['path'],
+      },
+    },
+  },
+  view: {
+    function: (a) => viewImage(a.path as string),
+    concurrencySafe: true,
+    schema: {
+      name: 'view',
+      description: '查看图片文件（png/jpg/jpeg/gif/webp/bmp），压缩后以视觉输入返回。文本文件请用 read 工具读取',
+      input_schema: {
+        type: 'object',
+        properties: { path: { type: 'string', description: '图片文件路径' } },
         required: ['path'],
       },
     },

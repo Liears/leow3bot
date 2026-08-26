@@ -46,7 +46,7 @@ npm install -g .      # 本地全局安装测试
 - **types.ts** — Anthropic messages 类型 + `StreamEvent`（5 事件）+ `CommittedItem`（进 `<Static>` 的视图模型）。
 - **store.ts** — `createStore`（CC 风格）+ `useSyncExternalStore`。**核心契约**：`committed` 只增（喂 `<Static>`）；`streamingText`/`phase` 等动态区字段每帧整体替换（ink 行级 diff）。
 - **llm.ts** — `callLLMStream` async generator。`@anthropic-ai/sdk` 配 Anthropic 兼容端点（`baseURL` + `authToken` + `signal`）。自己累积 `content_blocks`；yield 5 事件 + timing。
-- **tools.ts** — 8 工具（bash/read/write/edit/skill/ask/web_search/web_fetch）+ `compressImage`（sharp）+ `TOOLS_SCHEMAS`。`ask` 异步化（store `askResolver`）。
+- **tools.ts** — 9 工具（bash/read/view/write/edit/skill/ask/web_search/web_fetch）+ `compressImage`（sharp）+ `TOOLS_SCHEMAS`。`read` 纯文本（offset/limit 分页）、`view` 纯图片（压缩后视觉输入，职责分离对齐 Codex view_image；图片生命周期管理锚定本工具）；`ask` 异步化（store `askResolver`）。
 - **websearch.ts** — `searchWeb`（智谱 `/paas/v4/web_search`，复用 apiKey）+ `readUrl`（纯客户端 fetch + turndown HTML→MD + 重定向护栏，零平台依赖）。
 - **executor.ts** — `partitionToolCalls`（连续 safe 合并发批，unsafe 串行）+ `executeBatch` + `buildToolResultBlock`（按 type 分发：bash/image/error/text/web_search/web_fetch）。
 - **agent.ts** — `handleSubmit`（命令/图片/对话分发）+ `runTurn`（多轮工具循环，`MAX_TOOL_ROUNDS`，ESC 中断保留 partial）。
