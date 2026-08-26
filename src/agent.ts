@@ -218,6 +218,7 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
         roundRetries++;
         round--;
         commit({ kind: 'system', tone: 'warn', text: `⚠️ ${(e as Error).message}——自动重试 ${roundRetries}/2` });
+        await new Promise(r => setTimeout(r, 1500 * roundRetries)); // 退避：间歇性服务端故障（负载/显存波动）立刻重发易撞同一窗口
         continue;
       }
       const msg = e instanceof Error ? e.message : String(e);
