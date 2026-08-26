@@ -154,6 +154,17 @@ export async function* callLLMStream(
   } else if (stopReason === 'tool_use' && toolCalls.length) {
     yield { type: 'tool_call', assistant_msg: assistantMsg, tool_calls: toolCalls, usage, timing };
   } else {
+    // 退化完成检测：流正常结束但零内容块（stop_reason 还可能是 end_turn）——
+    // 实测 vLLM 对多图大 payload 会这样静默返回空。不能当正常 done（会表现为
+    // "突然停止、无报错无回复"），抛可重试错误让上层处理。
+    if (assistantContent.length === 0 && toolCalls.length === 0) {
+      const err = new Error(
+        `模型返回空响应（无内容块，stop_reason=${stopReason ?? '无'}）。` +
+        '可能是服务端过载或单请求图片过多/体积过大——可减少单批 view 的图片数量后重试',
+      ) as Error & { retryable?: boolean };
+      err.retryable = true;
+      throw err;
+    }
     yield { type: 'done', assistant_msg: assistantMsg, usage, timing };
   }
 }

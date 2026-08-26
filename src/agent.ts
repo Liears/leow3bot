@@ -162,6 +162,7 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
   let firstTtft: number | null = null;
   let lastUsage: Usage | null = null;
   const turnStart = performance.now();
+  let roundRetries = 0; // 空响应等可重试错误的已重试次数
   while (true) {
     round++;
     if (round > MAX_TOOL_ROUNDS) {
@@ -211,6 +212,14 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
         }
       }
     } catch (e) {
+      // 可重试错误（如 vLLM 多图请求返回空响应）：重试 2 次，仍失败才报错。
+      // 不重试本轮不计轮次（round 回退，continue 后再 ++）。
+      if ((e as { retryable?: boolean }).retryable === true && roundRetries < 2) {
+        roundRetries++;
+        round--;
+        commit({ kind: 'system', tone: 'warn', text: `⚠️ ${(e as Error).message}——自动重试 ${roundRetries}/2` });
+        continue;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       setError(`[错误] ${msg}`);
       ref.current = null;
@@ -218,6 +227,7 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
       return;
     }
     ref.current = null;
+    roundRetries = 0; // 本轮成功，重置重试计数
 
     if (!outcome) { setPhase('idle'); return; }
 
