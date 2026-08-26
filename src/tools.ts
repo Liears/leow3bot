@@ -39,7 +39,10 @@ export interface ToolDef {
 
 async function runBash(command: string, timeoutSec?: number) {
   const cwdTag = `[cwd: ${process.cwd()}]`;
-  const timeoutMs = Math.min(300, Math.max(5, Math.floor(timeoutSec ?? 60))) * 1000; // 钳制 5-300s，默认 60s
+  // 参数防御 + 钳制 5-300s，默认 60s。NaN（模型传非数值）会导致 exec 无超时挂死，必须挡
+  const n = Number(timeoutSec);
+  const sec = Number.isFinite(n) ? n : 60;
+  const timeoutMs = Math.min(300, Math.max(5, Math.floor(sec))) * 1000;
   const finish = (out: string) => {
     let body = out;
     if (body.length > MAX_BASH_OUTPUT_CHARS) {
@@ -109,18 +112,28 @@ async function readFile(p: string, offset = 1, limit?: number) {
   if (IMAGE_EXTENSIONS.includes(ext)) {
     return { type: 'error' as const, message: `"${p}" 是图片文件（${ext}），请使用 view 工具查看图片` };
   }
+  // 参数防御：模型可能传非数值（宽松端点不严格校验 schema），NaN 会让 slice 静默返回空
+  const offNum = Number(offset);
+  const limNum = limit === undefined ? undefined : Number(limit);
+  if (!Number.isFinite(offNum) || (limNum !== undefined && !Number.isFinite(limNum))) {
+    return { type: 'error' as const, message: `offset/limit 参数无效（offset=${JSON.stringify(offset)}, limit=${JSON.stringify(limit)}），必须是数字` };
+  }
   try {
     const st = statSync(p);
-    if (st.size > 10 * 1024 * 1024) {
-      return { type: 'error' as const, message: `文件过大（${(st.size / 1024 / 1024).toFixed(1)} MB）。请用 offset/limit 分段读，或用 bash 的 grep/head/tail 定向读取` };
+    const explicit = offNum !== 1 || limNum !== undefined; // 显式分页 = 模型有意识定向读
+    if (st.size > 100 * 1024 * 1024) {
+      return { type: 'error' as const, message: `文件过大（${(st.size / 1024 / 1024).toFixed(0)} MB），read 无法处理。请用 bash 的 head -c/sed -n/grep 定向读取` };
+    }
+    if (st.size > 10 * 1024 * 1024 && !explicit) {
+      return { type: 'error' as const, message: `文件较大（${(st.size / 1024 / 1024).toFixed(1)} MB）。请用 offset/limit 分段读取（如 offset=1&limit=200），或 bash 的 sed -n/grep 定向读取` };
     }
     const content = await fsReadFile(p, 'utf-8');
     const lines = content.split('\n');
     const total = lines.length;
-    const pageSize = Math.max(1, Math.floor(limit ?? 200)); // limit ≤ 0 钳制为 1，防空页死循环
-    const start = Math.max(0, offset - 1);
+    const pageSize = Math.max(1, Math.floor(limNum ?? 200)); // limit ≤ 0 钳制为 1，防空页死循环
+    const start = Math.max(0, Math.floor(offNum) - 1);
     if (start >= total) {
-      return { type: 'text' as const, content: `[offset=${offset} 超出文件总行数 ${total}，请用较小的 offset]` };
+      return { type: 'text' as const, content: `[offset=${offNum} 超出文件总行数 ${total}，请用较小的 offset]` };
     }
     const page = lines.slice(start, start + pageSize);
     const width = String(total).length;
@@ -131,9 +144,10 @@ async function readFile(p: string, offset = 1, limit?: number) {
     for (let i = 0; i < page.length; i++) {
       const line = `${String(start + i + 1).padStart(width)}  ${page[i]}`;
       if (chars + line.length + 1 > MAX_PAGE_CHARS) {
-        if (shown === 0 && page[i].length > MAX_PAGE_CHARS) {
-          // 首行单行即超预算（如 minified 文件）：截断显示该行片段并标注
-          out.push(line.slice(0, MAX_PAGE_CHARS) + ` …[第 ${start + 1} 行单行过长（${page[i].length} 字符），已截断显示]`);
+        if (shown === 0) {
+          // 首行即超预算（单行过长如 minified 文件）：截断显示该行片段并标注，
+          // 不留空页（空页 + 无效的"更小 limit"提示会让模型陷入重试循环）
+          out.push(line.slice(0, MAX_PAGE_CHARS) + ` …[第 ${start + 1} 行单行过长（${page[i].length} 字符），已截断显示；可用 bash sed -n '${start + 1}p' 取整行]`);
           shown = 1;
         }
         break;
@@ -202,7 +216,13 @@ async function editFile(p: string, oldString: string, newString: string, replace
   }
   const content = await fsReadFile(p, 'utf-8');
   const count = content.split(oldString).length - 1;
-  if (count === 0) return '错误：未找到要替换的文本';
+  if (count === 0) {
+    // read 输出带行号前缀，弱模型可能把行号带进 old_string——检测并提示
+    if (/^\s*\d+\s{2}/.test(oldString)) {
+      return '错误：未找到要替换的文本，且 old_string 疑似含 read 输出的行号前缀（如 "  123  "）——old_string 必须是文件原文，不含行号';
+    }
+    return '错误：未找到要替换的文本';
+  }
   if (count > 1 && !replaceAll) return `错误：找到 ${count} 处匹配，请提供更多上下文或设置 replace_all=true`;
   const newContent = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString);
   await fsWriteFile(p, newContent, 'utf-8');

@@ -100,6 +100,10 @@ export async function* callLLMStream(
             yield { type: 'text', text: d.text };
           } else if (d.type === 'input_json_delta' && d.partial_json) {
             block.input_parts += d.partial_json;
+          } else if (d.type === 'signature_delta') {
+            // 官方协议 signature 走增量 delta 下发（content_block_start 里没有），
+            // 兼容层则在 start 时内联——两条路径都覆盖，工具循环回传时才不缺签名
+            block.signature += String((d as { signature?: string }).signature ?? '');
           }
         }
       } else if (type === 'message_delta') {

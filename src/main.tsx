@@ -15,7 +15,7 @@ import { setSystem, buildSystem } from './agent.js';
 import { getWelcomeItems } from './commands.js';
 import { TOOLS_REGISTRY, disableTool } from './tools.js';
 import { searchWeb } from './websearch.js';
-import { getSkillDirs, MODEL } from './config.js';
+import { getSkillDirs, MODEL, API_BASE_URL, getApiKey, getWebApiKey } from './config.js';
 import { resumeSession, resumeLatest, activateResume, setSessionTitle } from './session.js';
 import { initTitleState } from './title.js';
 import type { MessageParam } from './types.js';
@@ -76,22 +76,27 @@ if (resumed) {
   setPhase('session_picker'); // render 前设置，App 首帧即选择器
 }
 
-// web_search 可用性探测（fire-and-forget 不阻塞启动）：不可用则从工具集移除，
-// 避免模型反复调用 401 失败（搜索端点固定智谱，非智谱 key 配置下必失败）。
+// web_search 可用性探测（fire-and-forget 不阻塞启动）：不可用则从工具集移除并重建
+// system（不再宣传该工具），避免模型反复调用失败。
+// 凭据守卫：端点非智谱且未显式配 webApiKey 时，apiKey 是第三方供应商的 key——
+// 不发探测请求（避免把第三方 key 以 Bearer 形式发给 open.bigmodel.cn）。
 void (async () => {
+  const webKeyExplicit = getWebApiKey() !== getApiKey();
+  const disableWith = (text: string) => {
+    if (!disableTool('web_search')) return;
+    setSystem(buildSystem()); // 重建 system，移除 web_search 宣传
+    commit({ kind: 'system', tone: 'warn', text });
+  };
+  if (!webKeyExplicit && !API_BASE_URL.includes('bigmodel')) {
+    disableWith('⚠️ web_search 未启用（当前端点非智谱且未配置 webApiKey，已跳过探测避免凭据外发）——已从工具集移除。如需联网搜索，请在 config.json 配置智谱 webApiKey');
+    return;
+  }
   try {
     const r = await searchWeb('连通性检测', { count: 1 });
     const ok = String(r.output ?? '').startsWith('搜索 "');
-    if (!ok && disableTool('web_search')) {
-      commit({
-        kind: 'system', tone: 'warn',
-        text: `⚠️ web_search 不可用（${String(r.output ?? '').slice(0, 60)}）——已从工具集移除。如需联网搜索，请在 config.json 配置智谱 webApiKey`,
-      });
-    }
+    if (!ok) disableWith(`⚠️ web_search 不可用（${String(r.output ?? '').slice(0, 60)}）——已从工具集移除。如需联网搜索，请在 config.json 配置智谱 webApiKey`);
   } catch {
-    if (disableTool('web_search')) {
-      commit({ kind: 'system', tone: 'warn', text: '⚠️ web_search 不可用（网络异常）——已从工具集移除' });
-    }
+    disableWith('⚠️ web_search 不可用（网络异常）——已从工具集移除');
   }
 })();
 

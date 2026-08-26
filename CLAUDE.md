@@ -52,7 +52,9 @@ npm install -g .      # 本地全局安装测试
 - **agent.ts** — `handleSubmit`（命令/图片/对话分发）+ `runTurn`（多轮工具循环，`MAX_TOOL_ROUNDS`，ESC 中断保留 partial）。
 - **commands.ts** — 15 斜杠命令 + `parseCommand`/`handleCommand` + welcome logo。
 - **skills.ts** — `loadSkills`（扫 `SKILL_DIRS`，gray-matter 解析 frontmatter）+ `getSkillPrompt`（`$ARGUMENTS` 替换）+ `getSkillListing`（注入 system）。
-- **session.ts** — `~/.leow3bot/sessions/`；autosave/save/load/list + compressContent（持久化去 base64）。
+- **session.ts** — `~/.leow3bot/sessions/`；autosave/save/load/list + compressContent（持久化去 base64）；resume 三件套（`resumeSession`/`rebuildCommitted`/`activateResume`，恢复时自动 chdir 到会话项目）。
+- **title.ts** — 会话主题后台生成（轻量 LLM 调用 + 节流，写回会话 name）。
+- **lib/persist.ts** — 大体积工具输出落盘（`/tmp/leow3bot-{uid}/`，bash/web_fetch 共用，24h 清理）。
 - **compaction.ts** — `compactMediaMessages`/`compactOldToolResults`。
 - **clipboard.ts** — `getClipboardImage`（WSL2 powershell / xclip / wl-paste / macOS osascript / Windows powershell）。
 

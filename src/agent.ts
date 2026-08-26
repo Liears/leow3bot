@@ -8,7 +8,7 @@ import {
 import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS } from './config.js';
 import { getSkillListing } from './skills.js';
 import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
-import { TOOLS_SCHEMAS } from './tools.js';
+import { TOOLS_SCHEMAS, TOOLS_REGISTRY } from './tools.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
 import { maybeUpdateTitle } from './title.js';
@@ -28,13 +28,16 @@ export function setSystem(s: string): void { system = s; }
 export function getSystem(): string { return system; }
 
 // 构建 system prompt（SYSTEM_PROMPT + skill listing + web 工具指引）。
-// enable/disable skill 后调 setSystem(buildSystem()) 即时重算 listing。
-const WEB_TOOLS_GUIDE =
-  '可用 web 工具：web_search（联网搜索最新信息，返回标题/URL/摘要）、web_fetch（读取指定 URL 的网页正文）。\n' +
-  '需要实时信息、最新数据、或用户问及网页内容时使用；回答末尾用 markdown 链接引用来源。';
+// enable/disable skill 或运行时 disableTool 后调 setSystem(buildSystem()) 重算。
 export function buildSystem(): string {
   const skillListing = getSkillListing();
-  return SYSTEM_PROMPT + (skillListing ? '\n\n' + skillListing : '') + '\n\n' + WEB_TOOLS_GUIDE;
+  const webParts: string[] = [];
+  if ('web_search' in TOOLS_REGISTRY) webParts.push('web_search（联网搜索最新信息，返回标题/URL/摘要）');
+  if ('web_fetch' in TOOLS_REGISTRY) webParts.push('web_fetch（读取指定 URL 的网页正文）');
+  const webGuide = webParts.length
+    ? `可用 web 工具：${webParts.join('、')}。需要实时信息、最新数据、或用户问及网页内容时使用；回答末尾用 markdown 链接引用来源。`
+    : '';
+  return SYSTEM_PROMPT + (skillListing ? '\n\n' + skillListing : '') + (webGuide ? '\n\n' + webGuide : '');
 }
 
 function appendUserMessage(text: string): void {
@@ -103,13 +106,54 @@ export function stripHistoricalThinking(messages: MessageParam[]): void {
   for (const m of messages) {
     if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
     const filtered = (m.content as ContentBlock[]).filter(b => b && typeof b === 'object' && b.type !== 'thinking');
-    if (filtered.length !== (m.content as ContentBlock[]).length) m.content = filtered;
+    if (filtered.length === 0) {
+      // 中断的 turn 可能只有 thinking 块——剥离后为空。空 content 数组部分严格端点会
+      // 400，用占位文本块保持消息结构（assistant 无配对约束，占位即可）。
+      m.content = [{ type: 'text', text: '(此轮无正文输出)' }];
+    } else if (filtered.length !== (m.content as ContentBlock[]).length) {
+      m.content = filtered;
+    }
+  }
+}
+
+// 修复中断 turn 遗留的孤儿 tool_use：无配对 tool_result 的 tool_use 块会让严格端点
+// 400（同款契约问题）。为每个未应答的 tool_use 合成 tool_result 注入其后方 user 消息。
+export function repairInterruptedToolCalls(messages: MessageParam[]): void {
+  const answered = new Set<string>();
+  for (const m of messages) {
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+    for (const b of m.content as ContentBlock[]) {
+      if (b && typeof b === 'object' && b.type === 'tool_result') {
+        answered.add(String((b as { tool_use_id?: string }).tool_use_id ?? ''));
+      }
+    }
+  }
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    const unanswered = (m.content as ContentBlock[]).filter(
+      b => b && typeof b === 'object' && b.type === 'tool_use' && !answered.has(String((b as { id?: string }).id ?? '')),
+    );
+    if (!unanswered.length) continue;
+    const synth = unanswered.map(b => ({
+      type: 'tool_result' as const,
+      tool_use_id: String((b as { id?: string }).id ?? ''),
+      content: '此调用已被中断，无结果',
+    }));
+    const next = messages[i + 1];
+    if (next && next.role === 'user' && Array.isArray(next.content)) {
+      (next.content as ContentBlock[]).unshift(...synth);
+    } else {
+      messages.splice(i + 1, 0, { role: 'user', content: synth });
+    }
+    for (const b of unanswered) answered.add(String((b as { id?: string }).id ?? ''));
   }
 }
 
 // 多轮工具循环（对齐 Python process_user_turn）
 async function runTurn(ref: { current: AbortController | null }): Promise<void> {
   stripHistoricalThinking(messages);
+  repairInterruptedToolCalls(messages);
   let round = 0;
   // turn 累加：整个 turn（含多次工具调用 LLM）的总 usage/timing，而非单次 LLM。
   // input/cache 取最后一次（当前 context），output/decode 累加，ttft 取首次（用户感知首 token）。
