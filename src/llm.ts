@@ -24,6 +24,7 @@ interface PartialBlock {
   type: string;
   text: string;
   thinking: string;
+  signature: string; // thinking 块签名（部分端点返回），工具续行时透传
   id: string;
   name: string;
   input_parts: string;
@@ -67,9 +68,10 @@ export async function* callLLMStream(
         usage = (((event as { message?: { usage?: Usage } }).message ?? {}).usage ?? null) as Usage | null;
       } else if (type === 'content_block_start') {
         const idx = (event as { index: number }).index;
-        const cb = (event as { content_block: { type: string; id?: string; name?: string } }).content_block;
+        const cb = (event as { content_block: { type: string; id?: string; name?: string; signature?: string } }).content_block;
         contentBlocks.set(idx, {
           type: cb.type, text: '', thinking: '',
+          signature: cb.signature ?? '',
           id: cb.id ?? '', name: cb.name ?? '', input_parts: '',
         });
       } else if (type === 'content_block_delta') {
@@ -124,7 +126,7 @@ export async function* callLLMStream(
   for (const idx of [...contentBlocks.keys()].sort((a, b) => a - b)) {
     const b = contentBlocks.get(idx)!;
     if (b.type === 'thinking' && b.thinking) {
-      assistantContent.push({ type: 'thinking', thinking: b.thinking });
+      assistantContent.push({ type: 'thinking', thinking: b.thinking, ...(b.signature ? { signature: b.signature } : {}) });
     } else if (b.type === 'text' && b.text) {
       assistantContent.push({ type: 'text', text: b.text });
     } else if (b.type === 'tool_use') {

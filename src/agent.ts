@@ -94,8 +94,22 @@ export async function handleSubmit(text: string, images: PastedImg[], exit: () =
   void runTurn(abortRef);
 }
 
+// 剥离历史 assistant 消息中的 thinking 块。
+// thinking 是推理脚手架——结论已凝结在 text/tool_use 里，历史思考对后续轮次零复用价值，
+// 但每次请求都被全额计入 input_tokens（实测 Qwen 兼容层 1:1 计费，柯南会话占非图片内容 77%）。
+// 只在新用户轮入口调用（此时必不在工具循环中）；循环内新产生的 thinking 保留——
+// Anthropic 契约要求当前工具循环的 thinking 随 tool_use 回传（signature 校验链）。
+export function stripHistoricalThinking(messages: MessageParam[]): void {
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    const filtered = (m.content as ContentBlock[]).filter(b => b && typeof b === 'object' && b.type !== 'thinking');
+    if (filtered.length !== (m.content as ContentBlock[]).length) m.content = filtered;
+  }
+}
+
 // 多轮工具循环（对齐 Python process_user_turn）
 async function runTurn(ref: { current: AbortController | null }): Promise<void> {
+  stripHistoricalThinking(messages);
   let round = 0;
   // turn 累加：整个 turn（含多次工具调用 LLM）的总 usage/timing，而非单次 LLM。
   // input/cache 取最后一次（当前 context），output/decode 累加，ttft 取首次（用户感知首 token）。
