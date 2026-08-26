@@ -182,7 +182,8 @@ async function viewImage(p: string) {
     const { data: compressed, mediaType } = await compressImage(data, ext);
     const b64 = compressed.toString('base64');
     const size = `${data.length} → ${compressed.length} bytes` + (compressed.length !== data.length ? ' (压缩后)' : '');
-    return { type: 'image' as const, path: p, media_type: mediaType, base64: b64, size };
+    // output 字段供 UI ⎿ 行摘要显示（summarizeResult 优先取 output，无则 JSON.stringify 兜底会露 base64）
+    return { type: 'image' as const, output: `已加载图片 ${path.basename(p)}（${size}）`, path: p, media_type: mediaType, base64: b64, size };
   } catch (e) {
     return { type: 'error' as const, message: `错误：${(e as Error).message}` };
   }
