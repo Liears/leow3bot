@@ -27,6 +27,8 @@ interface UserConfig {
   temperature?: number;
   // 权限管控：deny 命中直接拒绝；confirm 命中弹交互确认（~/.leow3bot/permissions.json 存记住的允许）
   permissions?: PermissionsConfig;
+  // 自定义系统提示词（可选，覆盖内置默认——身份/语言/工具约定）
+  systemPrompt?: string;
   // web 工具（智谱原生 web_search / reader）
   webSearchEngine?: string;
   webSearchContentSize?: string;
@@ -133,7 +135,15 @@ export function getSkillDirs(): string[] {
     path.join(process.cwd(), '.claude', 'skills'),
   ];
 }
-export const SYSTEM_PROMPT = '';
+// 基础系统提示词：身份 + 语言（中文思考）+ 风格，三句话。
+// 工具行为约定不写在这——工具 schema 描述和运行时报错提示（截断恢复路径、
+// 行号提示、守卫引导）在需要的瞬间送达，比开场白更有效。config.json 可覆盖。
+const DEFAULT_SYSTEM_PROMPT =
+  '你是 leow3bot，运行在用户本地终端的中文 AI 助手。' +
+  '始终使用中文思考和回复（专有名词、命令、代码保留原文）。' +
+  '回答简洁直接、结论先行。';
+
+export const SYSTEM_PROMPT: string = cfg.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
 
 // CC 风格符号 + 主色
 export const SYM_USER = '❯';
