@@ -11,6 +11,7 @@ import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
 import { TOOLS_SCHEMAS, TOOLS_REGISTRY } from './tools.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
+import { evictOldImages } from './compaction.js';
 import { maybeUpdateTitle } from './title.js';
 import type { MessageParam, ContentBlock, ToolResultBlock, ToolCall, Usage, Timing } from './types.js';
 
@@ -163,6 +164,7 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
   let lastUsage: Usage | null = null;
   const turnStart = performance.now();
   let roundRetries = 0; // 空响应等可重试错误的已重试次数
+  let prunedImages = false; // 是否已做过降级（释放旧图）重试
   while (true) {
     round++;
     if (round > MAX_TOOL_ROUNDS) {
@@ -220,6 +222,17 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
         commit({ kind: 'system', tone: 'warn', text: `⚠️ ${(e as Error).message}——自动重试 ${roundRetries}/2` });
         await new Promise(r => setTimeout(r, 1500 * roundRetries)); // 退避：间歇性服务端故障（负载/显存波动）立刻重发易撞同一窗口
         continue;
+      }
+      // 降级重试：常规重试耗尽后，释放较早的图片缩小请求（共享 GPU 服务器对大图片
+      // payload 的视觉编码在压力下会被静默丢弃），再试最后一次。每个 turn 只降级一次。
+      if ((e as { retryable?: boolean }).retryable === true && !prunedImages) {
+        const n = evictOldImages(messages, 3);
+        if (n > 0) {
+          prunedImages = true;
+          round--;
+          commit({ kind: 'system', tone: 'warn', text: `⚠️ 连续空响应——已释放 ${n} 张较早的图片以缩小请求（路径在调用记录中，需要时可重新 view），降级重试` });
+          continue;
+        }
       }
       const msg = e instanceof Error ? e.message : String(e);
       setError(`[错误] ${msg}`);

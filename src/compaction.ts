@@ -93,3 +93,41 @@ export function compactOldToolResults(messages: MessageParam[], keepRecent = 6):
   }
   return compacted;
 }
+
+/**
+ * 释放较早的图片（热/冷分层的最小实现，由空响应故障触发）：
+ * 把除最近 keepRecent 条含图消息之外的 image 块替换为文本占位
+ * （tool_result 外壳与 tool_use_id 保留，契约不破坏；路径在 tool_use 输入里可重新 view）。
+ * 返回释放的图片数。
+ */
+export function evictOldImages(messages: MessageParam[], keepRecent = 3): number {
+  const imgMsgIdx: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+    const has = (m.content as ContentBlock[]).some(b =>
+      b && typeof b === 'object' && b.type === 'tool_result' &&
+      Array.isArray((b as { content?: unknown }).content) &&
+      ((b as { content: Array<{ type?: string }> }).content).some(x => x && x.type === 'image'),
+    );
+    if (has) imgMsgIdx.push(i);
+  }
+  if (imgMsgIdx.length <= keepRecent) return 0;
+  let evicted = 0;
+  for (const idx of imgMsgIdx.slice(0, imgMsgIdx.length - keepRecent)) {
+    const blocks = messages[idx].content as ContentBlock[];
+    for (const b of blocks) {
+      if (!b || typeof b !== 'object' || b.type !== 'tool_result') continue;
+      const tr = b as { content?: Array<{ type?: string }> };
+      if (!Array.isArray(tr.content)) continue;
+      tr.content = tr.content.map(x => {
+        if (x && x.type === 'image') {
+          evicted++;
+          return { type: 'text', text: '[图片已释放以缩小请求体积；需要时可重新 view 该文件]' };
+        }
+        return x;
+      });
+    }
+  }
+  return evicted;
+}
