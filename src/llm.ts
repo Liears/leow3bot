@@ -1,3 +1,37 @@
+// 挂起看门狗：请求发出后 N 秒无任何流事件 → 判定服务器挂起，抛 retryable。
+// 会话尸检（全部"卡死"案例）：工具结果后的 LLM 请求零事件不返回——纯挂起，
+// 空响应检测（流结束无内容）覆盖不到，唯一兜底 API_TIMEOUT=600s × SDK 重试
+// = 最长 30 分钟假死。看门狗把挂起转为 retryable → 走既有重试/降级链。
+// 每次收到事件重置计时（长生成按事件流活跃度判活，不按总时长）。
+export const HANG_TIMEOUT_MS =
+  Number(process.env.LEOW3BOT_HANG_TIMEOUT_MS) > 0 ? Number(process.env.LEOW3BOT_HANG_TIMEOUT_MS) : 60_000;
+
+export async function* streamWithWatchdog<T>(stream: AsyncIterable<T>, hangMs: number): AsyncGenerator<T> {
+  const it = stream[Symbol.asyncIterator]();
+  const hangError = Object.assign(
+    new Error(`服务器 ${Math.round(hangMs / 1000)} 秒内无任何流事件（疑似挂起）`),
+    { retryable: true },
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let hangP!: Promise<never>; // arm() 在首次使用前同步赋值
+  const arm = () => {
+    if (timer) clearTimeout(timer);
+    hangP = new Promise((_, rej) => { timer = setTimeout(() => rej(hangError), hangMs); });
+  };
+  arm();
+  try {
+    while (true) {
+      const r = await Promise.race([it.next(), hangP]);
+      if (r.done) return;
+      arm(); // 事件到达，重置看门狗
+      yield r.value;
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+    try { await it.return?.(undefined as never); } catch { /* noop */ }
+  }
+}
+
 // LLM 流式调用：@anthropic-ai/sdk 配 Anthropic 兼容端点（baseURL + authToken + signal）
 // 自己累积 content_blocks（兼容端点与 SDK currentMessage 累积不一致），组装 assistant_msg；
 // yield 5 事件 + timing。SDK 仅用于 HTTP/SSE 传输 + abort。
@@ -60,7 +94,7 @@ export async function* callLLMStream(
 
   let aborted = false;
   try {
-    for await (const event of stream as AsyncIterable<Record<string, unknown>>) {
+    for await (const event of streamWithWatchdog(stream as AsyncIterable<Record<string, unknown>>, HANG_TIMEOUT_MS)) {
       if (signal.aborted) { aborted = true; break; }
       const type = event.type as string;
 
