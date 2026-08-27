@@ -116,9 +116,10 @@ export const MAX_TOOL_ROUNDS = 100;
 export const API_TIMEOUT = 600; // 秒
 
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
-export const IMAGE_MAX_WIDTH = 2000;
-export const IMAGE_MAX_HEIGHT = 2000;
-export const IMAGE_TARGET_RAW_SIZE = 3_750_000;
+// 图片护栏（即看即释设计下分辨率/质量不再是长期成本，上限仅防病理巨图与过大请求体）
+export const IMAGE_MAX_WIDTH = 4096;
+export const IMAGE_MAX_HEIGHT = 4096;
+export const IMAGE_TARGET_RAW_SIZE = 10_000_000; // payload 字节护栏（超限才温和降质，字节不占 token）
 
 // leow3bot 用户级 home：config / sessions / skills 都在这下面
 export const LEOW3BOT_HOME = path.join(homedir(), '.leow3bot');

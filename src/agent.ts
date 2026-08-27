@@ -208,6 +208,10 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
       return;
     }
 
+    // 即看即释：上一轮消费过的图片换占位（观察已在该轮 thinking 里），只保留
+    // 最新一批待消费。马拉松中图片占用恒定 ≈ 一个批次，这是放开分辨率的前提。
+    evictOldImages(messages, 1);
+
     const controller = new AbortController();
     ref.current = controller;
     setPhase('thinking');

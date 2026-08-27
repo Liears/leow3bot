@@ -78,25 +78,25 @@ export async function compressImage(raw: Buffer, ext: string): Promise<{ data: B
   const needResize = width > IMAGE_MAX_WIDTH || height > IMAGE_MAX_HEIGHT;
   const needCompress = raw.length > IMAGE_TARGET_RAW_SIZE;
   const mtOf = (e: string) => `image/${e === '.jpg' || e === '.jpeg' ? 'jpeg' : e.slice(1)}`;
+  // 即看即释：图片只在被消费的当轮占上下文，分辨率/质量不再是长期成本——
+  // 两个上限均为护栏（防病理巨图撑爆窗口、防请求体过大），普通图片原样直传零损耗，
+  // 保证观察记录（永久资产）的细节质量。
   if (!needResize && !needCompress) return { data: raw, mediaType: mtOf(ext) };
 
   let pipeline = img;
   if (needResize) {
     const ratio = Math.min(IMAGE_MAX_WIDTH / width, IMAGE_MAX_HEIGHT / height);
-    pipeline = img.resize(Math.round(width * ratio), Math.round(height * ratio), { fit: 'fill' });
+    pipeline = img.resize(Math.round(width * ratio), Math.round(height * ratio), { fit: 'inside' });
   }
-  const cands: Array<[Buffer, string]> = [];
-  cands.push([await pipeline.clone().png({ compressionLevel: 9 }).toBuffer(), 'image/png']);
-  cands.push([await pipeline.clone().flatten().jpeg({ quality: 80 }).toBuffer(), 'image/jpeg']);
-  cands.sort((a, b) => a[0].length - b[0].length);
-  for (const [d, mt] of cands) if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: mt };
-
-  for (const q of [80, 60, 40, 20]) {
+  // 超 payload 护栏：温和降质（q90→q80，字节不占 token 但质量损伤观察，尽量轻）；
+  // 仍超才减半尺寸（仅病理图走到这里）
+  for (const q of [90, 80] as const) {
     const d = await pipeline.clone().flatten().jpeg({ quality: q }).toBuffer();
     if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: 'image/jpeg' };
   }
-  const ratio = 1000 / (width || 1000);
-  const d = await img.resize(1000, Math.round((height || 1000) * ratio)).flatten().jpeg({ quality: 20 }).toBuffer();
+  const d = await pipeline
+    .resize(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)), { fit: 'inside' })
+    .flatten().jpeg({ quality: 85 }).toBuffer();
   return { data: d, mediaType: 'image/jpeg' };
 }
 
@@ -294,7 +294,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: true,
     schema: {
       name: 'view',
-      description: '查看图片文件（png/jpg/jpeg/gif/webp/bmp），压缩后以视觉输入返回。文本文件请用 read 工具读取',
+      description: '查看图片文件（png/jpg/jpeg/gif/webp/bmp）以视觉输入返回。多张图片时建议每批 ≤5 张（大批量会撑大单次请求）。被释放的图片不要凭记忆描述细节——需要确认时重新 view。文本文件请用 read 工具读取',
       input_schema: {
         type: 'object',
         properties: { path: { type: 'string', description: '图片文件路径' } },
