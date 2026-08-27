@@ -6,7 +6,7 @@ import { readFile as fsReadFile, writeFile as fsWriteFile, mkdir } from 'node:fs
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
-import { IMAGE_EXTENSIONS, IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, IMAGE_TARGET_RAW_SIZE, MAX_BASH_OUTPUT_CHARS } from './config.js';
+import { IMAGE_EXTENSIONS, IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, IMAGE_TARGET_RAW_SIZE, MAX_BASH_OUTPUT_CHARS, IMAGE_BATCH_PIXEL_BUDGET } from './config.js';
 import { persistToolOutput } from './lib/persist.js';
 import { getSkillPrompt, SKILLS_REGISTRY } from './skills.js';
 import { commit, setPhase, setAskResolver } from './store.js';
@@ -70,7 +70,7 @@ async function runBash(command: string, timeoutSec?: number) {
   }
 }
 
-export async function compressImage(raw: Buffer, _ext: string): Promise<{ data: Buffer; mediaType: string }> {
+export async function compressImage(raw: Buffer, _ext: string): Promise<{ data: Buffer; mediaType: string; width: number; height: number }> {
   const img = sharp(raw, { failOn: 'none' });
   const meta = await img.metadata();
   const width = meta.width ?? 0;
@@ -84,7 +84,7 @@ export async function compressImage(raw: Buffer, _ext: string): Promise<{ data: 
   const SAFE_PASSTHROUGH = new Set(['jpeg', 'png', 'gif', 'webp']);
   const fmt = meta.format ?? '';
   if (!needResize && !needCompress && SAFE_PASSTHROUGH.has(fmt)) {
-    return { data: raw, mediaType: `image/${fmt}` };
+    return { data: raw, mediaType: `image/${fmt}`, width, height };
   }
 
   let pipeline = img;
@@ -95,25 +95,25 @@ export async function compressImage(raw: Buffer, _ext: string): Promise<{ data: 
   // 透明图优先 PNG：flatten 到纯色底会丢信息（深色线稿在黑底上不可见）
   if (meta.hasAlpha) {
     const p = await pipeline.clone().png({ compressionLevel: 9 }).toBuffer();
-    if (p.length <= IMAGE_TARGET_RAW_SIZE) return { data: p, mediaType: 'image/png' };
+    if (p.length <= IMAGE_TARGET_RAW_SIZE) return { data: p, mediaType: 'image/png', width, height };
   }
   // 超 payload 护栏：温和降质（q90→q80，字节不占 token 但质量损伤观察，尽量轻）；
   // 白底 flatten（透明内容可读）
   for (const q of [90, 80] as const) {
     const d = await pipeline.clone().flatten({ background: '#ffffff' }).jpeg({ quality: q }).toBuffer();
-    if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: 'image/jpeg' };
+    if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: 'image/jpeg', width, height };
   }
   // 病理巨图：循环减半（目标钳制在护栏内），直到装得下或到下限
   let w = Math.min(Math.max(1, Math.round(width / 2)), IMAGE_MAX_WIDTH);
   let h = Math.min(Math.max(1, Math.round(height / 2)), IMAGE_MAX_HEIGHT);
   for (let i = 0; i < 3; i++) {
     const d = await img.resize(w, h, { fit: 'inside' }).flatten({ background: '#ffffff' }).jpeg({ quality: 85 }).toBuffer();
-    if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: 'image/jpeg' };
+    if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: 'image/jpeg', width, height };
     w = Math.max(200, Math.round(w / 2));
     h = Math.max(200, Math.round(h / 2));
   }
   const d = await img.resize(w, h, { fit: 'inside' }).flatten({ background: '#ffffff' }).jpeg({ quality: 60 }).toBuffer();
-  return { data: d, mediaType: 'image/jpeg' };
+  return { data: d, mediaType: 'image/jpeg', width, height };
 }
 
 // 本会话 read/edit/write 过的文件（绝对路径）。write 盲覆盖守卫用：
@@ -195,14 +195,53 @@ async function viewImage(p: string) {
   }
   try {
     const data = await fsReadFile(p);
-    const { data: compressed, mediaType } = await compressImage(data, ext);
+    const { data: compressed, mediaType, width, height } = await compressImage(data, ext);
     const b64 = compressed.toString('base64');
     const size = `${data.length} → ${compressed.length} bytes` + (compressed.length !== data.length ? ' (压缩后)' : '');
     // output 字段供 UI ⎿ 行摘要显示（summarizeResult 优先取 output，无则 JSON.stringify 兜底会露 base64）
-    return { type: 'image' as const, output: `已加载图片 ${path.basename(p)}（${size}）`, path: p, media_type: mediaType, base64: b64, size };
+    return { type: 'image' as const, output: `已加载图片 ${path.basename(p)}（${size}）`, path: p, media_type: mediaType, base64: b64, size, width, height };
   } catch (e) {
     return { type: 'error' as const, message: `错误：${(e as Error).message}` };
   }
+}
+
+/**
+ * 批次像素预算摊薄：本批 N 张图共享 IMAGE_BATCH_PIXEL_BUDGET，超额的降采样。
+ * 背景：实测该 vLLM 服务器对多图请求有硬处理上限（3 张原图 ≈33K 视觉 token 挂起，
+ * 单张 11K 稳定）——单张独享全预算（原图直传细节拉满），N 张各分 1/N（自动回到
+ * 服务器安全量级）。Lanczos 缩放（sharp 默认）保文字锐度，q90 重编码。
+ * 原地修改 result 对象（base64/media_type/size），返回降采样张数。
+ */
+export async function applyBatchImageBudget(results: unknown[]): Promise<number> {
+  const imgs = results.filter(
+    r => r && typeof r === 'object' && (r as { type?: string }).type === 'image',
+  ) as Array<{ base64?: string; media_type?: string; size?: string; width?: number; height?: number }>;
+  if (!imgs.length) return 0;
+  const perBudget = Math.floor(IMAGE_BATCH_PIXEL_BUDGET / imgs.length);
+  let downscaled = 0;
+  for (const img of imgs) {
+    const w = img.width ?? 0;
+    const h = img.height ?? 0;
+    if (!w || !h || w * h <= perBudget) continue; // 额度内不动（含单张原图直传）
+    const scale = Math.sqrt(perBudget / (w * h));
+    const nw = Math.max(1, Math.round(w * scale));
+    const nh = Math.max(1, Math.round(h * scale));
+    const buf = Buffer.from(img.base64 ?? '', 'base64');
+    try {
+      const out = await sharp(buf, { failOn: 'none' })
+        .resize(nw, nh, { fit: 'inside' })
+        .flatten({ background: '#ffffff' })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      img.base64 = out.toString('base64');
+      img.media_type = 'image/jpeg';
+      img.size = `${img.size} → 批次摊薄 ${w}×${h} → ${nw}×${nh}`;
+      img.width = nw;
+      img.height = nh;
+      downscaled++;
+    } catch { /* 降采样失败保留原图（宁可挂起靠看门狗，不可丢图） */ }
+  }
+  return downscaled;
 }
 
 async function writeFile(p: string, content: string) {

@@ -8,7 +8,7 @@ import {
 import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS, MAX_VIEWS_PER_ROUND } from './config.js';
 import { getSkillListing } from './skills.js';
 import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
-import { TOOLS_SCHEMAS, TOOLS_REGISTRY } from './tools.js';
+import { TOOLS_SCHEMAS, TOOLS_REGISTRY, applyBatchImageBudget } from './tools.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
 import { evictOldImages, evictPreviousTurnImages, IMG_EVICTED_MARKER_TOOL, IMG_EVICTED_MARKER_PASTE } from './compaction.js';
@@ -315,6 +315,11 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
         // ask 工具内部 setPhase('ask_pending')；其他工具显示执行 spinner
         if (!(batch.calls.length === 1 && batch.calls[0].name === 'ask')) setPhase('tool_running');
         const results = await executeBatch(batch);
+        // 批次像素预算摊薄：多图共享预算防服务器挂起（单张原图直传不受影响）
+        const downscaled = await applyBatchImageBudget(results.map(r => r[1]));
+        if (downscaled > 0) {
+          commit({ kind: 'system', tone: 'muted', text: `🗜️ 批次含多图，已按预算降采样 ${downscaled} 张（原图在磁盘，单张重看可获全分辨率）` });
+        }
         for (const [tc, res] of results) {
           commit({ kind: 'tool_result', call: tc, result: res });
           allBlocks.push(buildToolResultBlock(tc, res));

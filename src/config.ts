@@ -122,6 +122,10 @@ export const IMAGE_MAX_HEIGHT = 4096;
 export const IMAGE_TARGET_RAW_SIZE = 5_000_000; // payload 字节护栏（对齐 Anthropic 单图 5MB 上限；超限才温和降质，字节不占 token）
 // 单轮 view 硬预算：即看即释的工作集以"批次有界"为前提（schema 软引导之外的执行侧约束）
 export const MAX_VIEWS_PER_ROUND = 6;
+// 批次像素预算：单请求所有图片的总像素上限（Qwen 28px patch → ≈15K 视觉 token，
+// 实测该服务器安全线；3 张原图 ≈33K token 会挂起）。
+// 批内按张数摊薄——单张独享全预算（原图直传），N 张各分 1/N（自动降采样）。
+export const IMAGE_BATCH_PIXEL_BUDGET = 11_800_000;
 
 // leow3bot 用户级 home：config / sessions / skills 都在这下面
 export const LEOW3BOT_HOME = path.join(homedir(), '.leow3bot');
