@@ -98,14 +98,27 @@ export async function handleSubmit(text: string, images: PastedImg[], exit: () =
   void runTurn(abortRef);
 }
 
-// 剥离历史 assistant 消息中的 thinking 块。
-// thinking 是推理脚手架——结论已凝结在 text/tool_use 里，历史思考对后续轮次零复用价值，
-// 但每次请求都被全额计入 input_tokens（实测 Qwen 兼容层 1:1 计费，柯南会话占非图片内容 77%）。
-// 只在新用户轮入口调用（此时必不在工具循环中）；循环内新产生的 thinking 保留——
-// Anthropic 契约要求当前工具循环的 thinking 随 tool_use 回传（signature 校验链）。
+// 剥离历史 assistant 消息中的 thinking 块——**条件化**：
+//   图片轮（含 view tool_use，或前一条 user 消息含粘贴图片）→ thinking 保留。
+//     它是对图片细节的观察记录（不可再生载体），驱逐图片后是唯一在场记忆。
+//   文本/普通工具轮 → thinking 剥离。纯脚手架，结论已凝结在 text/tool_use 里，
+//     但每次请求全额计入 input_tokens（实测 Qwen 兼容层 1:1 计费）。
+// 载体决定去留：图片的信息载体是 thinking（48K）而非原图（270K），保留前者驱逐后者。
+// 只在新用户轮入口调用；循环内新产生的 thinking 保留（Anthropic 契约：当前工具循环
+// 的 thinking 随 tool_use 回传，signature 校验链）。
 export function stripHistoricalThinking(messages: MessageParam[]): void {
-  for (const m of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
     if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    // 图片轮判定 a：本消息含 view 的 tool_use
+    const hasView = (m.content as ContentBlock[]).some(
+      b => b && typeof b === 'object' && b.type === 'tool_use' && (b as { name?: string }).name === 'view',
+    );
+    // 图片轮判定 b：前一条 user 消息含粘贴图片（Ctrl-V 顶层 image 块）
+    const prev = messages[i - 1];
+    const prevHasPastedImage = !!prev && prev.role === 'user' && Array.isArray(prev.content) &&
+      (prev.content as ContentBlock[]).some(b => b && typeof b === 'object' && b.type === 'image');
+    if (hasView || prevHasPastedImage) continue;
     const filtered = (m.content as ContentBlock[]).filter(b => b && typeof b === 'object' && b.type !== 'thinking');
     if (filtered.length === 0) {
       // 中断的 turn 可能只有 thinking 块——剥离后为空。空 content 数组部分严格端点会
