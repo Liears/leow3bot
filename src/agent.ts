@@ -11,7 +11,7 @@ import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
 import { TOOLS_SCHEMAS, TOOLS_REGISTRY } from './tools.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
-import { evictOldImages } from './compaction.js';
+import { evictOldImages, evictPreviousTurnImages } from './compaction.js';
 import { maybeUpdateTitle } from './title.js';
 import type { MessageParam, ContentBlock, ToolResultBlock, ToolCall, Usage, Timing } from './types.js';
 
@@ -169,6 +169,12 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
   setError(null); // 新回合清除上一轮的错误提示（此前设置后永不清除，红字常驻）
   stripHistoricalThinking(messages);
   repairInterruptedToolCalls(messages);
+  // 轮入口驱逐历史图片（图片是当轮工作材料，观察已由图片轮 thinking 承载）。
+  // 必须在 strip 之后：strip 依赖粘贴图的存在判定图片轮、保留其 thinking。
+  const evictedImages = evictPreviousTurnImages(messages);
+  if (evictedImages > 0) {
+    commit({ kind: 'system', tone: 'muted', text: `🗜️ 已释放 ${evictedImages} 张历史图片（观察记录保留，原图可重新 view）` });
+  }
   let round = 0;
   // turn 累加：整个 turn（含多次工具调用 LLM）的总 usage/timing，而非单次 LLM。
   // input/cache 取最后一次（当前 context），output/decode 累加，ttft 取首次（用户感知首 token）。

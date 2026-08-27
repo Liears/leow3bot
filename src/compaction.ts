@@ -95,6 +95,45 @@ export function compactOldToolResults(messages: MessageParam[], keepRecent = 6):
 }
 
 /**
+ * 轮入口驱逐历史图片（设计：图片是当轮工作材料，轮结束即退场——观察记录已由
+ * 图片轮保留的 thinking 承载，原图在磁盘可随时重新 view）。
+ * 替换 messages 中除最后一条（本轮输入，可能含粘贴图）之外的所有 image 块：
+ *   tool_result 内嵌图 → 路径占位（路径就在相邻的 text 锚点里）
+ *   顶层粘贴图        → '[历史粘贴图片已释放]'（无磁盘副本）
+ * 返回释放的图片数。
+ * 必须在 stripHistoricalThinking 之后调用（strip 依赖粘贴图的存在判定图片轮）。
+ */
+export function evictPreviousTurnImages(messages: MessageParam[]): number {
+  let evicted = 0;
+  for (let i = 0; i < messages.length - 1; i++) {
+    const m = messages[i];
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+    m.content = (m.content as ContentBlock[]).map(b => {
+      if (!b || typeof b !== 'object') return b;
+      if (b.type === 'image') {
+        evicted++;
+        return { type: 'text' as const, text: '[历史粘贴图片已释放]' };
+      }
+      if (b.type === 'tool_result') {
+        const tr = b as { type: 'tool_result'; tool_use_id?: string; content?: unknown };
+        if (Array.isArray(tr.content)) {
+          const inner = (tr.content as Array<{ type?: string }>).map(x => {
+            if (x && x.type === 'image') {
+              evicted++;
+              return { type: 'text' as const, text: '[图片已释放——可按上方路径重新 view]' };
+            }
+            return x;
+          });
+          return { ...tr, content: inner } as unknown as ContentBlock;
+        }
+      }
+      return b;
+    }) as ContentBlock[];
+  }
+  return evicted;
+}
+
+/**
  * 释放较早的图片（热/冷分层的最小实现，由空响应故障触发）：
  * 把除最近 keepRecent 条含图消息之外的 image 块替换为文本占位
  * （tool_result 外壳与 tool_use_id 保留，契约不破坏；路径在 tool_use 输入里可重新 view）。
