@@ -119,7 +119,9 @@ export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp
 // 图片护栏（即看即释设计下分辨率/质量不再是长期成本，上限仅防病理巨图与过大请求体）
 export const IMAGE_MAX_WIDTH = 4096;
 export const IMAGE_MAX_HEIGHT = 4096;
-export const IMAGE_TARGET_RAW_SIZE = 10_000_000; // payload 字节护栏（超限才温和降质，字节不占 token）
+export const IMAGE_TARGET_RAW_SIZE = 5_000_000; // payload 字节护栏（对齐 Anthropic 单图 5MB 上限；超限才温和降质，字节不占 token）
+// 单轮 view 硬预算：即看即释的工作集以"批次有界"为前提（schema 软引导之外的执行侧约束）
+export const MAX_VIEWS_PER_ROUND = 6;
 
 // leow3bot 用户级 home：config / sessions / skills 都在这下面
 export const LEOW3BOT_HOME = path.join(homedir(), '.leow3bot');

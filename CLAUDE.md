@@ -70,9 +70,9 @@ npm install -g .      # 本地全局安装测试
 
 - **上下文管理——载体决定去留**：每类信息按其载体成本与可再生性决定生命周期（实测依据：thinking 占非图片内容 77%、图片 3.6K token/张且每轮重发、原图在磁盘可重 view）。
   - **轮入口流水线**（每条新消息时，顺序敏感）：`stripHistoricalThinking`（文本轮 thinking 剥离；**图片轮保留**——判定用"结构证据"：相邻 user 消息含 image 块或驱逐标记，覆盖 view/read 两种工具名且跨轮持久）→ `repairInterruptedToolCalls`（孤儿 tool_use 修复合成 result）→ `evictPreviousTurnImages`（历史图片→路径占位）。
-  - **图片即看即释**：轮循环每轮 `evictOldImages(messages, 1)`——图片只在被消费的当轮在场（进入下一轮请求→产生观察 thinking→立即换占位）。马拉松中图片占用恒定 ≈ 一个批次，这是**高保真看图**（护栏 4096px/10MB，普通图原样直传零重编码，质量阶梯仅 q90→q80 温和档）的前提；view 描述含批量引导（每批 ≤5 张）与"勿凭记忆描述已释放图片"契约。
+  - **图片即看即释**：轮循环每轮 `evictOldImages(messages, 1)`——图片被消费后至下一条图片消息或回合出口即换占位（观察进 thinking）。任意请求时刻含图消息 ≤1 条，这是**高保真看图**的前提：护栏 4096px/5MB（对齐 Anthropic 单图上限），普通图按真实格式原样直传零重编码（不安全格式如 tiff 强制归一为 jpeg；bmp 本构建 sharp 不支持解码、view 直接报错），透明图优先 PNG，降质阶梯仅 q90→q80 温和档 + 循环减半（病理巨图）；单轮 view 硬预算 `MAX_VIEWS_PER_ROUND=6`（超出延迟到下轮）；view 描述含批量引导（每批 ≤5 张）与"勿凭记忆描述已释放图片"契约。
+  - **空响应三件套**：流结束但零内容块 → retryable 错误 → 退避重试 ×2（1.5s/3s）→ 仍失败降级（`evictOldImages(messages, 0)` 连当前批也释放换会话存活，恢复后模型可重新 view）。针对共享 GPU 服务器对多图请求的间歇性静默丢弃。
   - **工具入口约束**：bash 30K 头部截断+落盘可读回（`BASH_MAX_OUTPUT_LENGTH` 可调）；read 分页（offset/limit，行号+14K 页预算）。核心原则：**工具结果带"再生配方"**（路径/命令/行号），截断只是展示窗口。
-  - **空响应三件套**：流结束但零内容块 → retryable 错误 → 退避重试 ×2（1.5s/3s）→ 仍失败降级（evictOldImages 缩小请求再试一次）。针对共享 GPU 服务器对多图请求的间歇性静默丢弃。
 - **流式 → 状态链路**：SDK `content_block_delta` → `appendText(delta)`（动态区 `streamingText` 累加）→ `done`/`tool_call` 时快照 `commit` 进 `<Static>` + `resetStream()`。
 - **`<Static>` 只增**：已 commit 的项永不修改（流式文本 done 时才 commit 定型）。
 - **skill progressive disclosure**：`getSkillListing` 注入 system（name+description 摘要），模型按需调 `skill(name,args)` 拉完整 body。

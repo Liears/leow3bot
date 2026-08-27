@@ -5,7 +5,7 @@ import {
   commit, appendText, appendThinking, flushText, commitThinking, resetMarkdown, setPhase, setUsageTiming,
   setError, getState, toggleCtx, togglePerf, toggleThinking,
 } from './store.js';
-import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS } from './config.js';
+import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS, MAX_VIEWS_PER_ROUND } from './config.js';
 import { getSkillListing } from './skills.js';
 import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
 import { TOOLS_SCHEMAS, TOOLS_REGISTRY } from './tools.js';
@@ -262,10 +262,12 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
         await new Promise(r => setTimeout(r, 1500 * roundRetries)); // 退避：间歇性服务端故障（负载/显存波动）立刻重发易撞同一窗口
         continue;
       }
-      // 降级重试：常规重试耗尽后，释放较早的图片缩小请求（共享 GPU 服务器对大图片
+      // 降级重试：常规重试耗尽后，释放全部图片缩小请求（共享 GPU 服务器对大图片
       // payload 的视觉编码在压力下会被静默丢弃），再试最后一次。每个 turn 只降级一次。
+      // keepRecent=0：即看即释后上下文本就只有当前批，降级连它也释放——
+      // 牺牲当批可见性换会话存活，恢复后模型可重新 view。
       if ((e as { retryable?: boolean }).retryable === true && !prunedImages) {
-        const n = evictOldImages(messages, 3);
+        const n = evictOldImages(messages, 0);
         if (n > 0) {
           prunedImages = true;
           round--;
@@ -292,7 +294,21 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
     }
 
     if (outcome.type === 'tool_call') {
-      const batches = partitionToolCalls(outcome.tool_calls ?? []);
+      // 单轮 view 硬预算：即看即释的"图片占用 ≈ 一个批次"以批次有界为前提。
+      // schema 软引导之外加执行侧上限——模型偶尔一轮发十几个 view，超出的延迟到
+      // 下一轮（合成提示结果），防单轮大批量顶爆窗口/请求体。
+      let viewBudget = MAX_VIEWS_PER_ROUND;
+      const deferred: ToolCall[] = [];
+      const capped = (outcome.tool_calls ?? []).filter(tc => {
+        if (tc.name !== 'view') return true;
+        if (viewBudget <= 0) {
+          deferred.push(tc);
+          return false;
+        }
+        viewBudget--;
+        return true;
+      });
+      const batches = partitionToolCalls(capped);
       const allBlocks: ToolResultBlock[] = [];
       for (const batch of batches) {
         for (const tc of batch.calls) commit({ kind: 'tool_start', call: tc });
@@ -303,6 +319,13 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
           commit({ kind: 'tool_result', call: tc, result: res });
           allBlocks.push(buildToolResultBlock(tc, res));
         }
+      }
+      // 延迟的 view：合成提示结果（契约要求每个 tool_use 都有配对 tool_result）
+      for (const tc of deferred) {
+        commit({ kind: 'tool_start', call: tc });
+        const res = { type: 'error' as const, message: `本单轮图片查看已达上限（${MAX_VIEWS_PER_ROUND} 张），本次调用已延迟未执行——请在下一轮分批继续（每批 ≤5 张更稳）` };
+        commit({ kind: 'tool_result', call: tc, result: res });
+        allBlocks.push(buildToolResultBlock(tc, res));
       }
       // 同一轮所有 tool_use 的结果必须合并成一条紧邻的 user 消息（Anthropic 契约：
       // tool_result 必须紧随 tool_use 出现在同一条消息里）。拆多条会被 DeepSeek

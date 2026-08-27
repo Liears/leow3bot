@@ -70,33 +70,49 @@ async function runBash(command: string, timeoutSec?: number) {
   }
 }
 
-export async function compressImage(raw: Buffer, ext: string): Promise<{ data: Buffer; mediaType: string }> {
+export async function compressImage(raw: Buffer, _ext: string): Promise<{ data: Buffer; mediaType: string }> {
   const img = sharp(raw, { failOn: 'none' });
   const meta = await img.metadata();
   const width = meta.width ?? 0;
   const height = meta.height ?? 0;
   const needResize = width > IMAGE_MAX_WIDTH || height > IMAGE_MAX_HEIGHT;
   const needCompress = raw.length > IMAGE_TARGET_RAW_SIZE;
-  const mtOf = (e: string) => `image/${e === '.jpg' || e === '.jpeg' ? 'jpeg' : e.slice(1)}`;
   // 即看即释：图片只在被消费的当轮占上下文，分辨率/质量不再是长期成本——
-  // 两个上限均为护栏（防病理巨图撑爆窗口、防请求体过大），普通图片原样直传零损耗，
-  // 保证观察记录（永久资产）的细节质量。
-  if (!needResize && !needCompress) return { data: raw, mediaType: mtOf(ext) };
+  // 上限均为护栏（防病理巨图撑爆窗口、防请求体过大），普通图片原样直传零损耗。
+  // 直传按 sharp 探测的真实格式给 media_type（防改名文件说谎）；仅 API 枚举内的
+  // 安全格式可直传——bmp/tiff 等强制重编码归一为 jpeg（image/bmp 会整请求 400）。
+  const SAFE_PASSTHROUGH = new Set(['jpeg', 'png', 'gif', 'webp']);
+  const fmt = meta.format ?? '';
+  if (!needResize && !needCompress && SAFE_PASSTHROUGH.has(fmt)) {
+    return { data: raw, mediaType: `image/${fmt}` };
+  }
 
   let pipeline = img;
   if (needResize) {
     const ratio = Math.min(IMAGE_MAX_WIDTH / width, IMAGE_MAX_HEIGHT / height);
     pipeline = img.resize(Math.round(width * ratio), Math.round(height * ratio), { fit: 'inside' });
   }
+  // 透明图优先 PNG：flatten 到纯色底会丢信息（深色线稿在黑底上不可见）
+  if (meta.hasAlpha) {
+    const p = await pipeline.clone().png({ compressionLevel: 9 }).toBuffer();
+    if (p.length <= IMAGE_TARGET_RAW_SIZE) return { data: p, mediaType: 'image/png' };
+  }
   // 超 payload 护栏：温和降质（q90→q80，字节不占 token 但质量损伤观察，尽量轻）；
-  // 仍超才减半尺寸（仅病理图走到这里）
+  // 白底 flatten（透明内容可读）
   for (const q of [90, 80] as const) {
-    const d = await pipeline.clone().flatten().jpeg({ quality: q }).toBuffer();
+    const d = await pipeline.clone().flatten({ background: '#ffffff' }).jpeg({ quality: q }).toBuffer();
     if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: 'image/jpeg' };
   }
-  const d = await pipeline
-    .resize(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)), { fit: 'inside' })
-    .flatten().jpeg({ quality: 85 }).toBuffer();
+  // 病理巨图：循环减半（目标钳制在护栏内），直到装得下或到下限
+  let w = Math.min(Math.max(1, Math.round(width / 2)), IMAGE_MAX_WIDTH);
+  let h = Math.min(Math.max(1, Math.round(height / 2)), IMAGE_MAX_HEIGHT);
+  for (let i = 0; i < 3; i++) {
+    const d = await img.resize(w, h, { fit: 'inside' }).flatten({ background: '#ffffff' }).jpeg({ quality: 85 }).toBuffer();
+    if (d.length <= IMAGE_TARGET_RAW_SIZE) return { data: d, mediaType: 'image/jpeg' };
+    w = Math.max(200, Math.round(w / 2));
+    h = Math.max(200, Math.round(h / 2));
+  }
+  const d = await img.resize(w, h, { fit: 'inside' }).flatten({ background: '#ffffff' }).jpeg({ quality: 60 }).toBuffer();
   return { data: d, mediaType: 'image/jpeg' };
 }
 

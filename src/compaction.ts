@@ -110,16 +110,19 @@ export const IMG_EVICTED_MARKER_PASTE = '[历史粘贴图片已释放';
  */
 export function evictPreviousTurnImages(messages: MessageParam[]): number {
   let evicted = 0;
-  for (let i = 0; i < messages.length - 1; i++) {
+  for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+    const isLast = i === messages.length - 1; // 本轮输入：顶层粘贴图保留
     m.content = (m.content as ContentBlock[]).map(b => {
       if (!b || typeof b !== 'object') return b;
-      if (b.type === 'image') {
+      if (b.type === 'image' && !isLast) {
         evicted++;
         return { type: 'text' as const, text: IMG_EVICTED_MARKER_PASTE };
       }
       if (b.type === 'tool_result') {
+        // 内嵌图即使是最后一条也驱逐：本轮输入不可能带 tool_result，
+        // 出现即为上一轮残留（错误回合后 appendUserMessage 合并进来的情形）
         const tr = b as { type: 'tool_result'; tool_use_id?: string; content?: unknown };
         if (Array.isArray(tr.content)) {
           const inner = (tr.content as Array<{ type?: string }>).map(x => {
