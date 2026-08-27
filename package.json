@@ -3,9 +3,16 @@
   "version": "0.1.0",
   "description": "DeepAnalyze — CLI AI agent (TypeScript + ink)",
   "type": "module",
-  "private": true,
   "bin": {
     "leow3bot": "./dist/main.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuanhechen/leow3bot.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
   },
   "files": [
     "dist",

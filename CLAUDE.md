@@ -49,13 +49,13 @@ npm install -g .      # 本地全局安装测试
 - **tools.ts** — 9 工具（bash/read/view/write/edit/skill/ask/web_search/web_fetch）+ `compressImage`（sharp）+ `TOOLS_SCHEMAS`。`read` 纯文本（offset/limit 分页）、`view` 纯图片（压缩后视觉输入，职责分离对齐 Codex view_image；图片生命周期管理锚定本工具）；`ask` 异步化（store `askResolver`）。
 - **websearch.ts** — `searchWeb`（智谱 `/paas/v4/web_search`，复用 apiKey）+ `readUrl`（纯客户端 fetch + turndown HTML→MD + 重定向护栏，零平台依赖）。
 - **executor.ts** — `partitionToolCalls`（连续 safe 合并发批，unsafe 串行）+ `executeBatch` + `buildToolResultBlock`（按 type 分发：bash/image/error/text/web_search/web_fetch）。
-- **agent.ts** — `handleSubmit`（命令/图片/对话分发）+ `runTurn`（多轮工具循环，`MAX_TOOL_ROUNDS`，ESC 中断保留 partial）。
+- **agent.ts** — `handleSubmit`（命令/图片/对话分发）+ `runTurn`（多轮工具循环，`MAX_TOOL_ROUNDS`，ESC 中断保留 partial）+ 轮入口上下文流水线（见 Key 设计）+ 空响应三件套（检测/退避重试/降级重试）。
 - **commands.ts** — 15 斜杠命令 + `parseCommand`/`handleCommand` + welcome logo。
 - **skills.ts** — `loadSkills`（扫 `SKILL_DIRS`，gray-matter 解析 frontmatter）+ `getSkillPrompt`（`$ARGUMENTS` 替换）+ `getSkillListing`（注入 system）。
 - **session.ts** — `~/.leow3bot/sessions/`；autosave/save/load/list + compressContent（持久化去 base64）；resume 三件套（`resumeSession`/`rebuildCommitted`/`activateResume`，恢复时自动 chdir 到会话项目）。
 - **title.ts** — 会话主题后台生成（轻量 LLM 调用 + 节流，写回会话 name）。
 - **lib/persist.ts** — 大体积工具输出落盘（`/tmp/leow3bot-{uid}/`，bash/web_fetch 共用，24h 清理）。
-- **compaction.ts** — `compactMediaMessages`/`compactOldToolResults`。
+- **compaction.ts** — `compactMediaMessages`（粘贴图摘要）/ `compactOldToolResults`（旧工具结果截断）/ `evictPreviousTurnImages`（轮入口图片驱逐）/ `evictOldImages`（故障降级驱逐，保最近 3 条含图消息）。
 - **clipboard.ts** — `getClipboardImage`（WSL2 powershell / xclip / wl-paste / macOS osascript / Windows powershell）。
 
 ### UI 组件（components/）
@@ -68,6 +68,10 @@ npm install -g .      # 本地全局安装测试
 
 ## Key 设计
 
+- **上下文管理——载体决定去留**：每类信息按其载体成本与可再生性决定生命周期（实测依据：thinking 占非图片内容 77%、图片 3.6K token/张且每轮重发、原图在磁盘可重 view）。
+  - **轮入口流水线**（每条新消息时，顺序敏感）：`stripHistoricalThinking`（文本轮 thinking 剥离；**图片轮——含 view tool_use 或前条 user 含粘贴图——保留**，它是对图片细节的观察记录）→ `repairInterruptedToolCalls`（孤儿 tool_use 修复合成 result）→ `evictPreviousTurnImages`（历史图片→路径占位；图片是当轮工作材料，观察已由 thinking 承载；须在 strip 之后——strip 靠粘贴图在场判定图片轮）。
+  - **工具入口约束**：bash 30K 头部截断+落盘可读回（`BASH_MAX_OUTPUT_LENGTH` 可调）；read 分页（offset/limit，行号+14K 页预算）；view 压缩（≤2000×2000）。核心原则：**工具结果带"再生配方"**（路径/命令/行号），截断只是展示窗口。
+  - **空响应三件套**：流结束但零内容块 → retryable 错误 → 退避重试 ×2（1.5s/3s）→ 仍失败降级（evictOldImages 缩小请求再试一次）。针对共享 GPU 服务器对多图请求的间歇性静默丢弃。
 - **流式 → 状态链路**：SDK `content_block_delta` → `appendText(delta)`（动态区 `streamingText` 累加）→ `done`/`tool_call` 时快照 `commit` 进 `<Static>` + `resetStream()`。
 - **`<Static>` 只增**：已 commit 的项永不修改（流式文本 done 时才 commit 定型）。
 - **skill progressive disclosure**：`getSkillListing` 注入 system（name+description 摘要），模型按需调 `skill(name,args)` 拉完整 body。
