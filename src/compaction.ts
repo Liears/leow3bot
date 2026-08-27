@@ -94,6 +94,11 @@ export function compactOldToolResults(messages: MessageParam[], keepRecent = 6):
   return compacted;
 }
 
+// 图片驱逐占位标记（strip 的图片轮判定靠它跨轮持久识别"这里曾有图"——
+// 图片被驱逐后，标记文本是唯一存活的证据。两边必须同步，故提为共享常量）。
+export const IMG_EVICTED_MARKER_TOOL = '[图片已释放';
+export const IMG_EVICTED_MARKER_PASTE = '[历史粘贴图片已释放';
+
 /**
  * 轮入口驱逐历史图片（设计：图片是当轮工作材料，轮结束即退场——观察记录已由
  * 图片轮保留的 thinking 承载，原图在磁盘可随时重新 view）。
@@ -101,7 +106,7 @@ export function compactOldToolResults(messages: MessageParam[], keepRecent = 6):
  *   tool_result 内嵌图 → 路径占位（路径就在相邻的 text 锚点里）
  *   顶层粘贴图        → '[历史粘贴图片已释放]'（无磁盘副本）
  * 返回释放的图片数。
- * 必须在 stripHistoricalThinking 之后调用（strip 依赖粘贴图的存在判定图片轮）。
+ * 必须在 stripHistoricalThinking 之后调用（strip 依赖粘贴图/标记的存在判定图片轮）。
  */
 export function evictPreviousTurnImages(messages: MessageParam[]): number {
   let evicted = 0;
@@ -112,7 +117,7 @@ export function evictPreviousTurnImages(messages: MessageParam[]): number {
       if (!b || typeof b !== 'object') return b;
       if (b.type === 'image') {
         evicted++;
-        return { type: 'text' as const, text: '[历史粘贴图片已释放]' };
+        return { type: 'text' as const, text: IMG_EVICTED_MARKER_PASTE };
       }
       if (b.type === 'tool_result') {
         const tr = b as { type: 'tool_result'; tool_use_id?: string; content?: unknown };
@@ -120,7 +125,7 @@ export function evictPreviousTurnImages(messages: MessageParam[]): number {
           const inner = (tr.content as Array<{ type?: string }>).map(x => {
             if (x && x.type === 'image') {
               evicted++;
-              return { type: 'text' as const, text: '[图片已释放——可按上方路径重新 view]' };
+              return { type: 'text' as const, text: IMG_EVICTED_MARKER_TOOL + '——可按上方路径重新 view]' };
             }
             return x;
           });
@@ -162,7 +167,7 @@ export function evictOldImages(messages: MessageParam[], keepRecent = 3): number
       tr.content = tr.content.map(x => {
         if (x && x.type === 'image') {
           evicted++;
-          return { type: 'text', text: '[图片已释放以缩小请求体积；需要时可重新 view 该文件]' };
+          return { type: 'text', text: IMG_EVICTED_MARKER_TOOL + '以缩小请求体积；需要时可重新 view 该文件]' };
         }
         return x;
       });

@@ -11,7 +11,7 @@ import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
 import { TOOLS_SCHEMAS, TOOLS_REGISTRY } from './tools.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
-import { evictOldImages, evictPreviousTurnImages } from './compaction.js';
+import { evictOldImages, evictPreviousTurnImages, IMG_EVICTED_MARKER_TOOL, IMG_EVICTED_MARKER_PASTE } from './compaction.js';
 import { maybeUpdateTitle } from './title.js';
 import type { MessageParam, ContentBlock, ToolResultBlock, ToolCall, Usage, Timing } from './types.js';
 
@@ -98,8 +98,31 @@ export async function handleSubmit(text: string, images: PastedImg[], exit: () =
   void runTurn(abortRef);
 }
 
+// 图片轮的"结构证据"判定：相邻 user 消息（前条=粘贴图；后条=工具结果图）里
+// 存在 image 块或驱逐占位标记。用结构而非工具名判定——覆盖旧会话（read 读图
+// 时代）且跨轮持久（图片被驱逐后标记仍在，观察 thinking 不会在下一轮被误剥）。
+function blockHasImageEvidence(b: ContentBlock): boolean {
+  if (!b || typeof b !== 'object') return false;
+  if (b.type === 'image') return true;
+  if (b.type === 'text') {
+    const t = (b as { text?: unknown }).text;
+    return typeof t === 'string' && (t.includes(IMG_EVICTED_MARKER_TOOL) || t.includes(IMG_EVICTED_MARKER_PASTE));
+  }
+  if (b.type === 'tool_result') {
+    const c = (b as { content?: unknown }).content;
+    if (Array.isArray(c)) return (c as ContentBlock[]).some(blockHasImageEvidence);
+    if (typeof c === 'string') return c.includes(IMG_EVICTED_MARKER_TOOL) || c.includes(IMG_EVICTED_MARKER_PASTE);
+  }
+  return false;
+}
+
+function msgHasImageEvidence(m: MessageParam | undefined): boolean {
+  if (!m || m.role !== 'user' || !Array.isArray(m.content)) return false;
+  return (m.content as ContentBlock[]).some(blockHasImageEvidence);
+}
+
 // 剥离历史 assistant 消息中的 thinking 块——**条件化**：
-//   图片轮（含 view tool_use，或前一条 user 消息含粘贴图片）→ thinking 保留。
+//   图片轮（相邻 user 消息有图片证据：粘贴图 / 工具结果图 / 驱逐标记）→ thinking 保留。
 //     它是对图片细节的观察记录（不可再生载体），驱逐图片后是唯一在场记忆。
 //   文本/普通工具轮 → thinking 剥离。纯脚手架，结论已凝结在 text/tool_use 里，
 //     但每次请求全额计入 input_tokens（实测 Qwen 兼容层 1:1 计费）。
@@ -110,15 +133,7 @@ export function stripHistoricalThinking(messages: MessageParam[]): void {
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
-    // 图片轮判定 a：本消息含 view 的 tool_use
-    const hasView = (m.content as ContentBlock[]).some(
-      b => b && typeof b === 'object' && b.type === 'tool_use' && (b as { name?: string }).name === 'view',
-    );
-    // 图片轮判定 b：前一条 user 消息含粘贴图片（Ctrl-V 顶层 image 块）
-    const prev = messages[i - 1];
-    const prevHasPastedImage = !!prev && prev.role === 'user' && Array.isArray(prev.content) &&
-      (prev.content as ContentBlock[]).some(b => b && typeof b === 'object' && b.type === 'image');
-    if (hasView || prevHasPastedImage) continue;
+    if (msgHasImageEvidence(messages[i - 1]) || msgHasImageEvidence(messages[i + 1])) continue;
     const filtered = (m.content as ContentBlock[]).filter(b => b && typeof b === 'object' && b.type !== 'thinking');
     if (filtered.length === 0) {
       // 中断的 turn 可能只有 thinking 块——剥离后为空。空 content 数组部分严格端点会
