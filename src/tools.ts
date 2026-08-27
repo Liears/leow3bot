@@ -310,7 +310,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: true,
     schema: {
       name: 'view',
-      description: '查看图片文件（png/jpg/jpeg/gif/webp/bmp）以视觉输入返回。多张图片时建议每批 ≤5 张（大批量会撑大单次请求）。被释放的图片不要凭记忆描述细节——需要确认时重新 view。文本文件请用 read 工具读取',
+      description: 'View a local image file when visual inspection is needed',
       input_schema: {
         type: 'object',
         properties: { path: { type: 'string', description: '图片文件路径' } },
