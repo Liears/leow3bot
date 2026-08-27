@@ -62,11 +62,17 @@ export function buildToolResultBlock(tc: ToolCall, result: unknown): ToolResultB
     return { type: 'tool_result', tool_use_id: toolUseId, content: r.output ?? '(无输出)' };
   }
   if (r && r.type === 'image') {
+    // 文件名双侧夹注（开闭标签式）：批量看图时"像素↔文件名"的绑定只靠
+    // 位置相邻（单侧锚点），注意力渗漏会把内容绑到相邻图上（实测事故：
+    // 内容真、归属错）。前后各念一遍文件名 = 任意位置的注意力到锚点的
+    // 距离减半 + 明确边界标记，结构化标记是模型训练最深的绑定语法。
+    const name = r.path ? String(r.path).split('/').pop() : '未知图片';
     return {
       type: 'tool_result', tool_use_id: toolUseId,
       content: [
-        { type: 'text', text: `已加载图片: ${r.path} (${r.size})` },
+        { type: 'text', text: `<img name="${name}">\n${r.path} (${r.size})` },
         { type: 'image', source: { type: 'base64', media_type: r.media_type ?? 'image/png', data: r.base64 ?? '' } },
+        { type: 'text', text: `</img name="${name}">` },
       ],
     };
   }
