@@ -6,6 +6,7 @@
   "bin": {
     "leow3bot": "./dist/main.mjs"
   },
+  "homepage": "https://leow3bot.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/yuanhechen/leow3bot.git"
