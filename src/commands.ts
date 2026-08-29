@@ -10,11 +10,15 @@ import { saveSession, loadSession, listSessions, PROJECT_ROOT } from './session.
 import { compactMediaMessages, compactOldToolResults } from './compaction.js';
 import type { CommittedItem, ContentBlock, MessageParam } from './types.js';
 
-// logo：「眼睛」图案（AI 凝视/观察），实心眼眶 + 中心 ◉ 瞳孔
+// logo：团队「WIN 杯」与 Bot 单眼的终端像素版。
+// 黑色杯身借终端背景呈现，[W] 是高清头像里三块 WIN 冰块的紧凑表达。
 export const LOGO = [
-  '█████',
-  '█ ◉ █',
-  '█████',
+  '  ╭───────╮  ',
+  ' ╭┴───────┴╮ ',
+  ' │    ◉    │ ',
+  ' │ [W] [W] │ ',
+  ' │   [W]   │ ',
+  ' ╰─────────╯ ',
 ];
 
 export const COMMANDS = [

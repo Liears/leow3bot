@@ -84,9 +84,19 @@ export default function MessageList({ item }: { item: CommittedItem }) {
           <Box flexDirection="column">
             {item.logo.map((line, ri) => (
               <Text key={ri}>
-                {Array.from({ length: maxW }, (_, ci) => (
-                  <Text key={ci} color={gradientHex(ci / Math.max(1, maxW - 1))}>{line[ci] ?? ' '}</Text>
-                ))}
+                {Array.from({ length: maxW }, (_, ci) => {
+                  const glyph = line[ci] ?? ' ';
+                  const isWinCube = glyph === '[' || glyph === 'W' || glyph === ']';
+                  return (
+                    <Text
+                      key={ci}
+                      color={isWinCube ? 'white' : gradientHex(ci / Math.max(1, maxW - 1))}
+                      bold={isWinCube}
+                    >
+                      {glyph}
+                    </Text>
+                  );
+                })}
               </Text>
             ))}
           </Box>
