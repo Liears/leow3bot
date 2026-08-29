@@ -37,19 +37,26 @@ export async function* streamWithWatchdog<T>(stream: AsyncIterable<T>, hangMs: n
 // yield 5 事件 + timing。SDK 仅用于 HTTP/SSE 传输 + abort。
 
 import Anthropic from '@anthropic-ai/sdk';
-import { API_BASE_URL, MODEL, MAX_TOKENS, TEMPERATURE, TOP_P, TOP_K, API_TIMEOUT, THINKING_BUDGET, getApiKey } from './config.js';
+import { API_BASE_URL, MODEL, TEMPERATURE, TOP_P, TOP_K, API_TIMEOUT, THINKING_BUDGET, getApiKey, getModelMaxTokens, setModelMaxTokens } from './config.js';
 import type { MessageParam, Usage, Timing, ToolCall, StreamEvent, ContentBlock } from './types.js';
 
 let _client: Anthropic | null = null;
+let _clientBase = '';
+let _clientToken = '';
 
 export function getClient(): Anthropic {
-  if (!_client) {
+  // 变更即重建（code-review F3）：onboarding 填 key / applyRuntimeConfig 换端点后，
+  // 旧 client 若继续复用会把创建时固化的旧凭据用到会话结束（--resume 无配置启动
+  // 会提前建出空 token 的 client，之后整个会话 401）。
+  if (!_client || _clientBase !== API_BASE_URL || _clientToken !== getApiKey()) {
     _client = new Anthropic({
       baseURL: API_BASE_URL,
       authToken: getApiKey(),
       timeout: API_TIMEOUT * 1000,
       maxRetries: 2,
     });
+    _clientBase = API_BASE_URL;
+    _clientToken = getApiKey();
   }
   return _client;
 }
@@ -70,6 +77,41 @@ export async function* callLLMStream(
   system: string,
   signal: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
+  // max_tokens 错误驱动自适应（code-review F8）：默认发全局值；端点若因超限 400
+  // （智谱格式 "max_tokens参数非法：限制数值范围[1,131072]"），提取上限 → 按模型
+  // 缓存 → 重试一次。400 是请求级拒绝、首个流不会产出任何事件，yield* 重放安全。
+  const limit = getModelMaxTokens(MODEL);
+  try {
+    yield* llmStreamOnce(messages, tools, system, signal, limit);
+  } catch (e: unknown) {
+    const adapted = adaptMaxTokensLimit(e, limit);
+    if (adapted === null) throw e;
+    setModelMaxTokens(MODEL, adapted); // 静默学习：同模型后续（含下次启动）永不复撞
+    yield* llmStreamOnce(messages, tools, system, signal, adapted);
+  }
+}
+
+// 从错误消息判断是否 max_tokens 超限并给出可用值：优先提取端点明示的上限
+// （[1,N] 或 "max... N"），提不到则减半退避（下限 1024 防死循环）。非此类错误返回 null。
+function adaptMaxTokensLimit(e: unknown, current: number): number | null {
+  const msg = String((e as { message?: string })?.message ?? e);
+  if (!/max_tokens/i.test(msg)) return null;
+  const m = msg.match(/\[1,(\d+)\]/) ?? msg.match(/(?:max(?:imum)?|limit)[^0-9]{0,30}(\d{4,7})/i);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1024 && n < current) return n;
+  }
+  const half = Math.floor(current / 2);
+  return half >= 1024 ? half : null;
+}
+
+async function* llmStreamOnce(
+  messages: MessageParam[],
+  tools: unknown[],
+  system: string,
+  signal: AbortSignal,
+  maxTokens: number,
+): AsyncGenerator<StreamEvent> {
   const t0 = performance.now();
   let tFirst: number | null = null;
   let tLast: number | null = null;
@@ -80,7 +122,7 @@ export async function* callLLMStream(
   const stream = getClient().messages.stream(
     {
       model: MODEL,
-      max_tokens: MAX_TOKENS,
+      max_tokens: maxTokens,
       temperature: TEMPERATURE,
       ...(TOP_P != null ? { top_p: TOP_P } : {}),
       ...(TOP_K != null ? { top_k: TOP_K } : {}),

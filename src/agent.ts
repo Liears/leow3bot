@@ -1,14 +1,15 @@
 // Agent 核心：handleSubmit（命令/图片/对话分发）+ runTurn（多轮工具循环）。
 
-import { callLLMStream } from './llm.js';
+import { callLLMStream, getClient } from './llm.js';
 import {
   commit, appendText, appendThinking, flushText, commitThinking, resetMarkdown, setPhase, setUsageTiming,
-  setError, getState, toggleCtx, togglePerf, toggleThinking,
+  setError, getState, toggleCtx, togglePerf, toggleThinking, setMeta,
 } from './store.js';
-import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS, MAX_VIEWS_PER_ROUND } from './config.js';
+import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS, MAX_VIEWS_PER_ROUND, API_BASE_URL, getApiKey, getWebApiKey, applyRuntimeConfig, hasExplicitModel } from './config.js';
 import { getSkillListing } from './skills.js';
 import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
-import { TOOLS_SCHEMAS, TOOLS_REGISTRY, applyBatchImageBudget } from './tools.js';
+import { TOOLS_SCHEMAS, TOOLS_REGISTRY, applyBatchImageBudget, disableTool } from './tools.js';
+import { searchWeb } from './websearch.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
 import { evictOldImages, evictPreviousTurnImages, IMG_EVICTED_MARKER_TOOL, IMG_EVICTED_MARKER_PASTE } from './compaction.js';
@@ -345,4 +346,84 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
     setPhase('idle');
     return;
   }
+}
+
+// web_search 可用性探测（main 启动 / onboarding 完成后调用）：不可用则从工具集
+// 移除并重建 system（不再宣传该工具），避免模型反复调用失败。
+// 凭据守卫：端点非智谱且未显式配 webApiKey 时，apiKey 是第三方供应商的 key——
+// 不发探测请求（避免把第三方 key 以 Bearer 形式发给 open.bigmodel.cn）。
+// 注意：onboarding 未完成（apiKey 为空）时不要探测——空 key 必然失败，
+// 会让 web_search 被误杀，onboarding 填完 key 也不会恢复（须调用方把控时机）。
+export async function probeWebSearchAvailability(): Promise<void> {
+  const webKeyExplicit = getWebApiKey() !== getApiKey();
+  // 副作用延迟到 idle（code-review F10）：轮次进行中改 system / splice 工具表会
+  // 炸 prompt-cache 前缀，且模型已发出的 web_search tool_use 会变「未知工具」。
+  // 轮询上限 ~30s 后放弃（工具保留，模型调用时看到错误自行绕开）。
+  const applyWhenIdle = (fn: () => void) => {
+    let tries = 0;
+    const tick = () => {
+      if (getState().phase === 'idle') { fn(); return; }
+      if (++tries < 60) setTimeout(tick, 500);
+    };
+    tick();
+  };
+  const disableWith = (text: string) => {
+    applyWhenIdle(() => {
+      if (!disableTool('web_search')) return;
+      setSystem(buildSystem()); // 重建 system，移除 web_search 宣传
+      commit({ kind: 'system', tone: 'warn', text });
+    });
+  };
+  // 凭据守卫（code-review F11）：hostname 正规比较（大小写不敏感、按域名后缀），
+  // 不再用子串 includes——含 "bigmodel" 子串的网关 URL 会误放行外发第三方 key，
+  // 大写 BigModel.cn 的真智谱用户会被误拒
+  let llmHost = '';
+  try { llmHost = new URL(API_BASE_URL).hostname.toLowerCase(); } catch { /* 无效端点由请求层报错 */ }
+  const isZhipu = llmHost === 'bigmodel.cn' || llmHost.endsWith('.bigmodel.cn');
+  if (!webKeyExplicit && !isZhipu) {
+    disableWith('⚠️ web_search 未启用（当前端点非智谱且未配置 webApiKey，已跳过探测避免凭据外发）——已从工具集移除。如需联网搜索，请在 config.json 配置智谱 webApiKey');
+    return;
+  }
+  try {
+    const r = await searchWeb('连通性检测', { count: 1 });
+    // 判结构化 results 字段而非显示字符串（code-review F14）——searchWeb 的
+    // output 文案改版不会误杀健康工具；错误时 results 为 undefined
+    const ok = Array.isArray((r as { results?: unknown }).results);
+    if (!ok) {
+      // 瞬时失败不杀工具（code-review F9）：并发上限（1701「请稍后重试」）、
+      // 超时、离线等此刻的失败不代表后续也失败——保留 web_search，模型调用时
+      // 会看到 searchWeb 的错误消息自行重试或绕开。只有确定性失败（鉴权类）
+      // 才值得永久移除并提示配 key。
+      const msg = String((r as { output?: string }).output ?? '');
+      const transient = /并发|稍后重试|rate.?limit|too many|timeout|超时|网络|ECONN|fetch failed/i.test(msg);
+      if (!transient) {
+        disableWith(`⚠️ web_search 不可用（${msg.slice(0, 60)}）——已从工具集移除。如需联网搜索，请在 config.json 配置智谱 webApiKey`);
+      }
+    }
+  } catch {
+    // searchWeb 内部已把异常转为结果对象，此处仅兜底——异常同样按瞬时处理（F9）
+  }
+}
+
+// 模型自动选型（启动 / onboarding 完成后调用，fire-and-forget）：用户未显式配
+// model 时查 /v1/models（Anthropic 兼容端点标准路由，智谱已实测支持），过滤
+// 非对话模型与轻量变体（-air/-turbo/-flash/-lite/-mini）后取 created_at 最新的
+// 旗舰；applyRuntimeConfig 写回固化（此后视为显式配置，/model 随时可改）。
+// 探测失败静默保留默认（不写回，下次启动再探）——不阻塞、不打扰。
+export async function autoDetectModel(): Promise<void> {
+  if (hasExplicitModel()) return;
+  try {
+    const page = await getClient().models.list();
+    const raw = (Array.isArray(page) ? page : ((page as { data?: unknown[] }).data ?? [])) as Array<{ id?: unknown; created_at?: unknown }>;
+    const chat = raw
+      .map(m => ({ id: String(m?.id ?? ''), at: String(m?.created_at ?? '') }))
+      .filter(m => m.id && !/embedding|tts|asr|whisper|cogview|cogvideo|chargen/i.test(m.id) && !/-(air|turbo|flash|lite|mini)/i.test(m.id));
+    if (!chat.length) return;
+    chat.sort((a, b) => b.at.localeCompare(a.at)); // created_at 降序 = 最新旗舰优先
+    const best = chat[0].id;
+    const persisted = applyRuntimeConfig({ model: best });
+    const prev = getState().meta;
+    setMeta({ model: best, nTools: prev?.nTools ?? 0, nSkills: prev?.nSkills ?? 0, cwd: prev?.cwd ?? process.cwd() });
+    commit({ kind: 'system', tone: 'ok', text: `✓ 已自动选择模型 ${best}${persisted ? '' : '（⚠️ 写入配置失败，仅本次会话生效）'}，可用 /model 切换` });
+  } catch { /* 端点不支持 /v1/models / 网络异常 → 保留默认，不写回 */ }
 }

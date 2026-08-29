@@ -1,11 +1,11 @@
 // 斜杠命令系统（移植 commands.py）+ welcome 横幅/logo。
 
 import { homedir } from 'node:os';
-import { MODEL, getProviderLabel } from './config.js';
+import { MODEL, getProviderLabel, applyRuntimeConfig } from './config.js';
 import { TOOLS_SCHEMAS } from './tools.js';
 import { getSystem } from './agent.js';
-import { getState, setPhase } from './store.js';
-import { countTokens } from './llm.js';
+import { getState, setPhase, setMeta } from './store.js';
+import { countTokens, getClient } from './llm.js';
 import { saveSession, loadSession, listSessions, PROJECT_ROOT } from './session.js';
 import { compactMediaMessages, compactOldToolResults } from './compaction.js';
 import type { CommittedItem, ContentBlock, MessageParam } from './types.js';
@@ -97,8 +97,32 @@ export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): P
       ctx.clearMessages();
       ctx.setMessages([]);
       return { output: '✓ 已清空对话', tone: 'ok' };
-    case 'model':
-      return { output: '当前模型: ' + MODEL, tone: 'muted' };
+    case 'model': {
+      const m = args[0];
+      if (!m) {
+        setPhase('model_picker'); // 交互式选择：↑↓ + Enter（列表/切换/校验都在 picker 内完成）
+        return;
+      }
+      // 带参快捷路径：切换前查端点校验（code-review F13——手滑拼错的模型名一旦
+      // 持久化，后续每轮请求都失败且重启后仍带病）；网络失败宽松放行不挡切换
+      const ids = await (async (): Promise<string[] | null> => {
+        try {
+          const page = await getClient().models.list();
+          const raw = (Array.isArray(page) ? page : ((page as { data?: unknown[] }).data ?? [])) as Array<{ id?: unknown }>;
+          const list = raw.map(x => String(x?.id ?? '')).filter(Boolean);
+          return list.length ? list : null;
+        } catch { return null; }
+      })();
+      if (ids && !ids.includes(m)) {
+        return { output: `✗ 未知模型 ${m}。可用: ${ids.join(' / ')}（或直接 /model 进入选择器）`, tone: 'warn' };
+      }
+      const persisted = applyRuntimeConfig({ model: m }); // 运行时即时生效（live binding）+ 写回 config.json
+      const prev = getState().meta; // 状态栏立即更新（其余 meta 不变）
+      setMeta({ model: m, nTools: prev?.nTools ?? 0, nSkills: prev?.nSkills ?? 0, cwd: prev?.cwd ?? process.cwd() });
+      return persisted
+        ? { output: `✓ 模型已切换: ${m}${ids ? '' : '（⚠️ 无法校验模型名：端点查询失败）'}（已写入 ~/.leow3bot/config.json，下次启动保持）`, tone: 'ok' }
+        : { output: `✓ 模型已切换: ${m}（⚠️ 写入配置失败，仅本次会话生效）`, tone: 'ok' };
+    }
     case 'tools':
       return { output: '可用工具: ' + TOOLS_SCHEMAS.map(s => s.name).join(' '), tone: 'muted' };
     case 'skills':
