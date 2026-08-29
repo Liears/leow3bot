@@ -46,3 +46,4 @@ read_tool_test/
 
 # skill 数据（pdf-converter-mineru 是独立 git repo，本地保留；运行时 loadSkills 读本地）
 skill/
+skills/pdf-workspace/
