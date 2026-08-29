@@ -1,5 +1,5 @@
 {
-  "name": "@yuanhechen/leow3bot",
+  "name": "@leow3lab/leow3bot",
   "version": "0.1.0",
   "description": "leow3bot — CLI AI agent (TypeScript + ink)",
   "type": "module",

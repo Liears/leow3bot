@@ -9,6 +9,13 @@
 - **Node.js ≥ 20**
 - **智谱 BigModel API Key**（[获取](https://open.bigmodel.cn)）
 
+### npm 安装
+
+```bash
+npm install -g @leow3lab/leow3bot
+leow3bot
+```
+
 ### 从源码安装
 
 ```bash
@@ -19,8 +26,6 @@ npm install -g .        # 注册全局 leow3bot 命令
 ```
 
 安装完成后，在任意目录输入 `leow3bot` 启动。开发调试也可不装全局，在仓库目录直接 `npm start`。
-
-> npm 包（`npm install -g @yuanhechen/leow3bot`）待发布，当前请从源码安装。
 
 ### 开发
 
