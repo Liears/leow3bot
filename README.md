@@ -5,7 +5,7 @@ CLI AI agent，**TypeScript + ink**，对标 Claude Code 的终端渲染。连�
 ## 特性
 
 - **流式逐字 + 底部状态栏常驻 + 鼠标滚轮翻原生 scrollback** 三者兼得 —— ink `<Static>` + 动态区 diff，对标 Claude Code
-- **8 工具**：`bash` / `read` / `write` / `edit` / `skill` / `ask` / `web_search`（智谱搜索） / `web_fetch`（纯客户端抓取）
+- **9 工具**：`bash` / `read` / `view`（看图） / `write` / `edit` / `skill` / `ask` / `web_search`（智谱搜索） / `web_fetch`（纯客户端抓取）
 - 流式思考（默认折叠，`/verbose` 展开）
 - ESC 中断流式（AbortController）
 - 15 斜杠命令 + Tab 补全
@@ -30,6 +30,7 @@ leow3bot
   "model": "glm-5.1"
 }
 ```
+支持 `permissions`（deny / confirm 规则，命中 confirm 交互确认，记住的允许持久化在 `~/.leow3bot/permissions.json`），见 `config.example.json` 与 `CLAUDE.md`。
 
 ### 开发
 ```bash
@@ -66,6 +67,11 @@ leow3bot 自动扫描三个目录的 `<name>/SKILL.md`：
 ```bash
 npx skills add https://github.com/vercel-labs/skills --skill find-skills
 leow3bot    # 自动发现并可用 find-skills
+```
+
+本仓库自带 `skills/pdf/`（PDF 分类路由：文字型提取 markdown、扫描型渲染成图，pip 依赖自举安装）。它不随 npm 包分发——从源码使用时拷贝或软链到上面任一目录即可：
+```bash
+cp -r skills/pdf ~/.leow3bot/skills/pdf
 ```
 
 ## 架构
