@@ -1,4 +1,4 @@
-# DeepAnalyze（leow3bot）
+# leow3bot
 
 CLI AI agent，**TypeScript + ink**，对标 Claude Code 的终端渲染。连接智谱 BigModel 的 Anthropic 兼容端点（glm-5.x），支持工具调用、流式输出、skill、会话存储、剪贴板图片粘贴、联网搜索/阅读。
 

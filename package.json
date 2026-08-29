@@ -1,7 +1,7 @@
 {
   "name": "@yuanhechen/leow3bot",
   "version": "0.1.0",
-  "description": "DeepAnalyze — CLI AI agent (TypeScript + ink)",
+  "description": "leow3bot — CLI AI agent (TypeScript + ink)",
   "type": "module",
   "bin": {
     "leow3bot": "./dist/main.mjs"

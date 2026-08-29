@@ -4,7 +4,7 @@ This file provides guidance when working with code in this repository.
 
 ## Project Overview
 
-DeepAnalyze（leow3bot）：CLI AI agent，**TypeScript + ink**（对标 Claude Code 的终端渲染）。连接智谱 BigModel 的 Anthropic 兼容端点（glm-5.x），支持工具调用、流式输出、skill、会话存储、剪贴板图片粘贴、联网搜索/阅读。中文 UI / 中文 prompt。
+leow3bot：CLI AI agent，**TypeScript + ink**（对标 Claude Code 的终端渲染）。连接智谱 BigModel 的 Anthropic 兼容端点（glm-5.x），支持工具调用、流式输出、skill、会话存储、剪贴板图片粘贴、联网搜索/阅读。中文 UI / 中文 prompt。
 
 **为什么 ink**：为同时实现「流式逐字 + 底部状态栏常驻 + 鼠标滚轮翻原生 scrollback 历史」三者兼得 —— 这正是 Claude Code 用 ink 渲染做到的。靠 ink 的 `<Static>`（已完成消息进原生 scrollback）+ 动态区每帧 diff（当前流式 + 状态栏 + 输入）。
 

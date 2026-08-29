@@ -34,7 +34,7 @@ function baseName(p: string): string {
   return p ? (p.split('/').filter(Boolean).pop() ?? p) : p;
 }
 
-// CC 风格状态栏：[model] │ cwd git:(branch) │ DeepAnalyze  +  Context ░░ % · perf
+// CC 风格状态栏：[model] │ cwd git:(branch) │ leow3bot  +  Context ░░ % · perf
 export default function StatusBar() {
   const s = useStore();
   const cwd = s.meta?.cwd ?? '';
@@ -58,7 +58,7 @@ export default function StatusBar() {
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      {/* 行 1：[model] │ cwd git:(branch) │ DeepAnalyze */}
+      {/* 行 1：[model] │ cwd git:(branch) │ leow3bot */}
       <Text>
         <Text color={SUB}>  [</Text>
         <Text color={ACCENT} bold>{model}</Text>
