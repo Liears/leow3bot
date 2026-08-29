@@ -86,7 +86,7 @@ export default function MessageList({ item }: { item: CommittedItem }) {
               <Text key={ri}>
                 {Array.from({ length: maxW }, (_, ci) => {
                   const glyph = line[ci] ?? ' ';
-                  const isWinCube = glyph === 'W';
+                  const isWinCube = glyph === '◇';
                   return (
                     <Text
                       key={ci}
