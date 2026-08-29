@@ -78,7 +78,7 @@ cp -r skills/pdf ~/.leow3bot/skills/pdf
 
 | 维度 | 选择 |
 |---|---|
-| 运行时 | Node.js ≥18.19；开发用 tsx，发布用 tsup bundle |
+| 运行时 | Node.js ≥20；开发用 tsx，发布用 tsup bundle |
 | UI | ink 5 + react 18，`<Static>` 复刻 CC scrollback |
 | LLM | `@anthropic-ai/sdk` 配 Anthropic 兼容端点 |
 | 状态 | `createStore` + `useSyncExternalStore`（CC 风格）|

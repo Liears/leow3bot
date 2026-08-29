@@ -19,7 +19,7 @@
     "config.example.json"
   ],
   "engines": {
-    "node": ">=18.19"
+    "node": ">=20"
   },
   "scripts": {
     "start": "tsx src/main.tsx",
@@ -34,7 +34,7 @@
     "test": "tsc --noEmit && npm run test:md && npm run test:store && npm run test:perm && npm run test:app"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.40.1",
+    "@anthropic-ai/sdk": "^0.50.1",
     "gray-matter": "^4.0.3",
     "ink": "^5.0.1",
     "ink-spinner": "^5.0.0",
