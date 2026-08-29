@@ -15,22 +15,24 @@ CLI AI agent，**TypeScript + ink**，对标 Claude Code 的终端渲染。连�
 
 ## 快速开始
 
-### 全局安装
+### 安装（源码）
 ```bash
-npm install -g @yuanhechen/leow3bot
-leow3bot
+git clone https://github.com/yuanhechen/leow3bot.git
+cd leow3bot
+npm install
+npm install -g .        # 注册全局命令；开发态也可直接 npm start
 ```
 
-### 配置
-复制 `config.example.json` → `~/.leow3bot/config.json`，填你的智谱 BigModel apiKey：
-```json
-{
-  "apiBaseUrl": "https://open.bigmodel.cn/api/anthropic",
-  "apiKey": "你的智谱 key",
-  "model": "glm-5.1"
-}
+### 首次启动（零手工配置）
+```bash
+leow3bot               # 任意目录启动
 ```
-支持 `permissions`（deny / confirm 规则，命中 confirm 交互确认，记住的允许持久化在 `~/.leow3bot/permissions.json`），见 `config.example.json` 与 `CLAUDE.md`。
+首次启动进入四步引导：API 端点（回车 = 默认智谱端点）→ API Key → 从列表选择模型（`/v1/models` 实时拉取，↑↓ + Enter）→ 输入上下文窗口长度（回车 = 默认 192000）。配置自动写入 `~/.leow3bot/config.json`，联网搜索默认复用同一 key——无需编辑任何文件。max_tokens 输出上限无需填写，超限报错时自动学习并按模型记忆；切换模型用 `/model`（交互选择器，即时生效并持久化）。
+
+> npm 全局安装（`npm install -g @yuanhechen/leow3bot`）待包发布后启用。
+
+### 高级配置（可选）
+`~/.leow3bot/config.json` 可按需手工追加字段：`contextWindow`、`permissions`（deny / confirm 规则，记住的允许持久化在 `~/.leow3bot/permissions.json`，示例见 `config.example.json`）、`systemPrompt`（覆盖内置系统提示词）、`thinkingBudget`（思考预算，默认 5000）、`webApiKey`（搜索用独立 key，默认复用 apiKey）。
 
 ### 开发
 ```bash
@@ -50,7 +52,8 @@ npm install -g .       # 本地全局安装测试
 | `/context` `/perf` | 开关底部状态栏（context / perf 指标）|
 | `/verbose` | 展开 / 折叠思考内容 |
 | `/clear` | 清空对话 |
-| `/tools` `/skills` `/model` `/history` `/status` | 信息查看 |
+| `/tools` `/skills` `/history` `/status` | 信息查看 |
+| `/model [名称]` | 交互式模型选择器（↑↓ + Enter）；`/model glm-5.3` 直接切换并持久化 |
 | `/save` `/load` `/sessions` | 会话保存 / 加载 / 列表 |
 | `/compact` | 压缩上下文（媒体 + 旧工具结果）|
 | `/q` | 退出 |
@@ -69,10 +72,7 @@ npx skills add https://github.com/vercel-labs/skills --skill find-skills
 leow3bot    # 自动发现并可用 find-skills
 ```
 
-本仓库自带 `skills/pdf/`（PDF 分类路由：文字型提取 markdown、扫描型渲染成图，pip 依赖自举安装）。它不随 npm 包分发——从源码使用时拷贝或软链到上面任一目录即可：
-```bash
-cp -r skills/pdf ~/.leow3bot/skills/pdf
-```
+> PDF skill（分类路由：文字型提取 markdown、扫描型渲染成图，pip 依赖自举）为本地资产，不随仓库分发——把 `skills/pdf/` 放入上面任一目录即可启用。
 
 ## 架构
 
@@ -85,7 +85,7 @@ cp -r skills/pdf ~/.leow3bot/skills/pdf
 | 图片 | sharp（替代 PIL）|
 | web | 智谱 web_search + 纯客户端 web_fetch（turndown）|
 
-核心模块见 `CLAUDE.md`。
+核心模块：`config.ts`（配置+运行时切换）/ `llm.ts`（流式+自适应）/ `agent.ts`（轮次循环+探测）/ `tools.ts`（9 工具）/ `store.ts`（CC 风格状态）/ `websearch.ts`、`executor.ts`、`skills.ts`、`session.ts`、`compaction.ts`。
 
 ## 验证脚本
 
