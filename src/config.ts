@@ -181,6 +181,9 @@ function boundedIntFromEnv(name: string, def: number, upper: number): number {
 export const MAX_BASH_OUTPUT_CHARS = boundedIntFromEnv('BASH_MAX_OUTPUT_LENGTH', 30000, 150000);
 export const MAX_TOOL_ROUNDS = 100;
 export const API_TIMEOUT = 600; // 秒
+// 单次粘贴的全文进上下文阈值（字符）：超过则落盘 + 头部截断（再生配方，
+// 对齐 bash/web_fetch 大输出策略，防巨量粘贴炸 scrollback 与上下文）
+export const PASTE_PERSIST_CHARS = 20_000;
 
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
 // 图片护栏（即看即释设计下分辨率/质量不再是长期成本，上限仅防病理巨图与过大请求体）

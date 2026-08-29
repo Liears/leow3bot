@@ -73,7 +73,9 @@ interface Outcome {
 
 // 命令 / 图片 / 对话分发
 export async function handleSubmit(text: string, images: PastedImg[], exit: () => void): Promise<void> {
-  const parsed = parseCommand(text);
+  // 命令均为单行；多行文本（唯一来源是折叠粘贴的还原）一律当普通消息——
+  // 防止 /* 注释头、/usr 路径开头的粘贴被命令分发吞掉（review #5）
+  const parsed = text.includes('\n') ? null : parseCommand(text);
   if (parsed) {
     const r = await handleCommand(parsed.cmd, parsed.args, makeCtx());
     if (r?.exit) { exit(); return; }

@@ -270,6 +270,11 @@ async function editFile(p: string, oldString: string, newString: string, replace
     }
     return `错误：文件不存在 ${p}`;
   }
+  // 盲改守卫（对齐 write 的 READ_KNOWN_FILES，review #14）：已存在但本会话从未
+  // 读过的文件不允许直接 edit——防止模型没读过就盲替换、破坏未知内容
+  if (!READ_KNOWN_FILES.has(path.resolve(p))) {
+    return `错误：文件已存在且本会话尚未读取过 ${p}。为防止盲改未知内容，请先用 read 工具读取确认后再 edit`;
+  }
   const content = await fsReadFile(p, 'utf-8');
   const count = content.split(oldString).length - 1;
   if (count === 0) {
