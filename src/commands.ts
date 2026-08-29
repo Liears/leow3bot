@@ -20,7 +20,27 @@ export const LOGO = [
 export const COMMANDS = [
   'help', 'clear', 'compact', 'tools', 'skills', 'model', 'subagent', 'history',
   'perf', 'verbose', 'context', 'status', 'save', 'load', 'sessions', 'q',
-];
+] as const;
+
+export type CommandName = typeof COMMANDS[number];
+
+export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
+  help: '显示这份帮助',
+  clear: '清空当前对话',
+  compact: '压缩历史内容，释放上下文',
+  tools: '查看模型可以调用的工具',
+  skills: '启用或禁用 skills',
+  model: '选择或切换模型',
+  history: '查看当前对话的历史摘要',
+  perf: '开关性能状态栏',
+  verbose: '展开或折叠模型思考过程',
+  context: '开关上下文状态栏并统计 token',
+  status: '查看状态栏使用提示',
+  save: '保存当前会话快照',
+  load: '加载已保存的会话',
+  sessions: '列出已保存的会话',
+  q: '退出 leow3bot',
+};
 
 const HELP_TEXT = [
   '可用命令',
