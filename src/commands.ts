@@ -11,14 +11,15 @@ import { compactMediaMessages, compactOldToolResults } from './compaction.js';
 import type { CommittedItem, ContentBlock, MessageParam } from './types.js';
 
 // logo：团队「WIN 杯」与 Bot 单眼的终端像素版。
-// 黑色杯身借终端背景呈现，[W] 是高清头像里三块 WIN 冰块的紧凑表达。
+// 青蓝色 █ 形成实心像素外壳，黑色杯心借终端背景呈现；
+// [W] 是高清头像里三块 WIN 冰块的紧凑表达。
 export const LOGO = [
-  '  ╭───────╮  ',
-  ' ╭┴───────┴╮ ',
-  ' │    ◉    │ ',
-  ' │ [W] [W] │ ',
-  ' │   [W]   │ ',
-  ' ╰─────────╯ ',
+  '   █████████   ',
+  ' █████████████ ',
+  '███    ◉    ███',
+  '███ [W] [W] ███',
+  ' ███  [W]  ███ ',
+  '  ███████████  ',
 ];
 
 export const COMMANDS = [
