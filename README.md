@@ -61,7 +61,7 @@ Node.js ≥ 20 · [智谱 BigModel API Key](https://open.bigmodel.cn)
 
 <div align="center">
 
-**v0.1.0 · 支持 GLM-5.3 / Qwen3.8 · Apache 2.0 开源**
+**v0.2.0 · subagent 委派 + 四层测试体系 · Apache 2.0 开源**
 
 [Apache License 2.0](LICENSE) © 2026 yuanhechen
 
