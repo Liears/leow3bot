@@ -55,7 +55,7 @@ Node.js ≥ 20 · [智谱 BigModel API Key](https://open.bigmodel.cn)
 
 ## 贡献
 
-改动一律走 PR：CI（`typecheck + test + build`，Node 20/22）必须全绿，Gemini Code Assist 按 [`.gemini/styleguide.md`](.gemini/styleguide.md) 自动初审。动代码前请先读 [AGENTS.md](AGENTS.md)。
+改动一律走 PR：CI（`typecheck + vitest(unit/integration) + E2E + build`，Node 20/22）必须全绿，Gemini Code Assist 按 [`.gemini/styleguide.md`](.gemini/styleguide.md) 自动初审。动代码前请先读 [AGENTS.md](AGENTS.md)，测试怎么写见 [docs/testing.md](docs/testing.md)。
 
 ---
 

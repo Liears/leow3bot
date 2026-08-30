@@ -30,11 +30,12 @@
     "typecheck": "tsc --noEmit",
     "docs:dev": "vitepress dev docs-src",
     "docs:build": "vitepress build docs-src && rm -rf docs/docs && cp -R docs-src/.vitepress/dist docs/docs",
-    "test:md": "FORCE_COLOR=1 tsx src/scripts/test-markdown.tsx",
-    "test:app": "FORCE_COLOR=1 tsx src/scripts/test-app.tsx",
-    "test:store": "tsx src/scripts/test-store.ts",
-    "test:perm": "tsx src/scripts/test-permissions.ts",
-    "test": "tsc --noEmit && npm run test:md && npm run test:store && npm run test:perm && npm run test:app"
+    "test": "tsc --noEmit && vitest run && npm run test:e2e",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "test:e2e": "tsx tests/e2e/run-e2e.ts",
+    "prepare": "husky"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.50.1",
@@ -48,14 +49,16 @@
     "turndown": "^7.2.4"
   },
   "devDependencies": {
-    "@types/node": "^18.19.0",
+    "@types/node": "^20.19.43",
     "@types/react": "^18.3.31",
     "@types/turndown": "^5.0.6",
     "ink-testing-library": "^4.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^5.6.0",
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "vitest": "^4.1.11",
+    "husky": "^9.1.7"
   },
   "license": "Apache-2.0",
   "keywords": [

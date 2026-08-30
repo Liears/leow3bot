@@ -32,6 +32,8 @@ interface UserConfig {
   webApiKey?: string;
   // thinking（深度思考）
   thinkingBudget?: number;
+  // 子代理模型（/subagent 命令写入；缺省继承主模型 model）
+  subagentModel?: string;
   // 各模型 max_tokens 上限缓存（自动学习，非用户配置面）
   modelLimits?: Record<string, number>;
 }
@@ -49,12 +51,17 @@ function readJsonFile(file: string): Record<string, unknown> | null {
 // 不用 first-match-wins——否则 /model 或 onboarding 写出的稀疏 home 文件
 // （只含 model/apiKey）会遮蔽 repo config 里的 apiKey/permissions 等字段，
 // 导致开发态配置静默失效、onboarding 误触发（code-review F5）。
+// LEOW3BOT_HOME 环境变量可重定向用户级 home（E2E 测试隔离，对齐
+// LEOW3BOT_PERMISSIONS_FILE 先例；本地计算防 TDZ，与下方常量保持一致）。
 function loadConfig(): UserConfig {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const proj = readJsonFile(path.join(here, '..', 'config.json')) ?? {};
-  // 直接用 homedir() 拼，不能用 LEOW3BOT_HOME 常量（它在后面才定义，此处处于 TDZ）
-  const home = readJsonFile(path.join(homedir(), '.leow3bot', 'config.json')) ?? {};
+  const home = readJsonFile(path.join(homeDir(), '.leow3bot', 'config.json')) ?? {};
   return { ...proj, ...home } as UserConfig;
+}
+
+function homeDir(): string {
+  return process.env.LEOW3BOT_HOME ? path.resolve(process.env.LEOW3BOT_HOME) : homedir();
 }
 
 const cfg = loadConfig();
@@ -62,7 +69,8 @@ const cfg = loadConfig();
 // —— 用户可配置项（config.json 覆盖；API_BASE_URL/API_KEY/MODEL 为 let，
 //     onboarding 首次配置与 /model 切换经 applyRuntimeConfig 运行时更新）——
 export const DEFAULT_API_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
-export let API_BASE_URL = cfg.apiBaseUrl ?? DEFAULT_API_BASE_URL;
+// LEOW3BOT_API_BASE_URL：测试隔离旋钮（E2E 指向本地 mock 服务器），优先于配置文件
+export let API_BASE_URL = process.env.LEOW3BOT_API_BASE_URL ?? cfg.apiBaseUrl ?? DEFAULT_API_BASE_URL;
 export let API_KEY = cfg.apiKey ?? '';
 export let MODEL = cfg.model ?? 'glm-5.1';
 // 上下文窗口无查询通道（/v1/models 两端点均不带该字段，实测）——onboarding 让
@@ -73,7 +81,9 @@ export let CONTEXT_WINDOW = cfg.contextWindow ?? 192000;
 // false——静默覆盖会把用户全部配置清空（code-review F6）；写失败（权限/磁盘）
 // 同样返回 false，调用方据此如实报告（F7）。
 function updateHomeConfig(patch: Record<string, unknown>): boolean {
-  const file = path.join(homedir(), '.leow3bot', 'config.json');
+  // homeDir()（尊重 LEOW3BOT_HOME 重定向）而非 homedir()——测试隔离下写盘须与
+  // 读取同源（bug 实录：隔离旋钮生效后写盘仍落真实 home，测试污染用户配置）
+  const file = path.join(homeDir(), '.leow3bot', 'config.json');
   let obj: Record<string, unknown> | null = null;
   let existed = false;
   try {
@@ -99,12 +109,13 @@ function updateHomeConfig(patch: Record<string, unknown>): boolean {
 // 运行时配置更新（onboarding / /model 共用）：更新运行时值——ESM live binding
 // 让 llm.ts 等模块的既有 import 即时拿到新值，零改动；并读改写 ~/.leow3bot/config.json
 // 持久化。返回是否写盘成功（运行时切换总是生效，落盘失败仅影响下次启动）。
-export function applyRuntimeConfig(patch: { apiBaseUrl?: string; apiKey?: string; model?: string; contextWindow?: number }): boolean {
+export function applyRuntimeConfig(patch: { apiBaseUrl?: string; apiKey?: string; model?: string; contextWindow?: number; subagentModel?: string | null }): boolean {
   if (patch.apiBaseUrl !== undefined) API_BASE_URL = patch.apiBaseUrl;
   if (patch.apiKey !== undefined) API_KEY = patch.apiKey;
   if (patch.model !== undefined) MODEL = patch.model;
   if (patch.contextWindow !== undefined) CONTEXT_WINDOW = patch.contextWindow;
-  return updateHomeConfig(patch);
+  if (patch.subagentModel !== undefined) SUBAGENT_MODEL = patch.subagentModel;
+  return updateHomeConfig(patch as Record<string, unknown>);
 }
 
 // —— max_tokens 按模型自适应（code-review F8 → 错误驱动学习）——
@@ -123,6 +134,25 @@ export function setModelMaxTokens(model: string, limit: number): void {
 // model 是否被用户显式配置（false = 允许启动时从 /v1/models 自动探测选型）
 export function hasExplicitModel(): boolean {
   return cfg.model !== undefined;
+}
+
+// —— SubAgent（设计见 docs/subagent-design.md）——
+// 子代理模型：默认继承主模型（行为可预期、零配置）；/subagent 命令显式选择并
+// 持久化到这里。解析顺序：agent 定义 frontmatter model > subagentModel > 继承主模型。
+export let SUBAGENT_MODEL: string | null = cfg.subagentModel ?? null;
+export function getSubagentModel(): string | null { return SUBAGENT_MODEL; }
+export const MAX_SUBAGENT_TURNS = 25;          // 默认轮次（agent 定义可覆盖）
+export const MAX_SUBAGENT_TURNS_HARD = 50;     // 轮次硬上限
+export const MAX_CONCURRENT_SUBAGENTS = 3;     // 并发上限（TUI 无多路面板，多了暗处不可见）
+export const SUBAGENT_REPORT_MAX_CHARS = 4000; // 报告回传上限（超出落盘，主上下文零污染）
+
+// agent 定义扫描目录（后者覆盖前者同名；与 getSkillDirs 同构，兼容 CC 生态）
+export function getAgentDirs(): string[] {
+  return [
+    path.join(homedir(), '.claude', 'agents'),
+    path.join(LEOW3BOT_HOME, 'agents'),
+    path.join(process.cwd(), '.claude', 'agents'),
+  ];
 }
 
 // —— 内置固定值（原 config.json 字段，简化后固化）——
@@ -198,7 +228,8 @@ export const MAX_VIEWS_PER_ROUND = 6;
 export const IMAGE_BATCH_PIXEL_BUDGET = 11_800_000;
 
 // leow3bot 用户级 home：config / sessions / skills 都在这下面
-export const LEOW3BOT_HOME = path.join(homedir(), '.leow3bot');
+// （LEOW3BOT_HOME 环境变量可重定向——E2E 测试隔离）
+export const LEOW3BOT_HOME = path.join(homeDir(), '.leow3bot');
 
 // skill 扫描目录（数组顺序=优先级，后者覆盖前者同名 skill）：
 //   1) ~/.claude/skills      —— Claude 用户级标准（`npx skills add` 默认装这）

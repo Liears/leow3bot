@@ -18,7 +18,7 @@ export const LOGO = [
 ];
 
 export const COMMANDS = [
-  'help', 'clear', 'compact', 'tools', 'skills', 'model', 'history',
+  'help', 'clear', 'compact', 'tools', 'skills', 'model', 'subagent', 'history',
   'perf', 'verbose', 'context', 'status', 'save', 'load', 'sessions', 'q',
 ];
 
@@ -123,6 +123,10 @@ export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): P
         ? { output: `✓ 模型已切换: ${m}${ids ? '' : '（⚠️ 无法校验模型名：端点查询失败）'}（已写入 ~/.leow3bot/config.json，下次启动保持）`, tone: 'ok' }
         : { output: `✓ 模型已切换: ${m}（⚠️ 写入配置失败，仅本次会话生效）`, tone: 'ok' };
     }
+    case 'subagent':
+      // 子代理模型选择器（默认继承主模型；agent 定义自带 model 的仍优先）
+      setPhase('subagent_picker');
+      return;
     case 'tools':
       return { output: '可用工具: ' + TOOLS_SCHEMAS.map(s => s.name).join(' '), tone: 'muted' };
     case 'skills':

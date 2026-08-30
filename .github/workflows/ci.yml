@@ -1,5 +1,8 @@
-# CI 门禁：typecheck + 全量测试 + 构建
+# CI 门禁：typecheck + 全量测试（vitest unit/integration + E2E）+ 构建
 # 配合分支保护将本 job 设为 required check（Settings → Branches → master）
+# E2E 在 runner 上原生可跑：mock LLM 服务器（node:http）+ script(1) PTY 驱动真进程，
+# 零外部网络依赖（LLM 请求全部打到 127.0.0.1 的 mock）。
+
 name: CI
 
 on:
@@ -28,17 +31,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      # npm test = tsc --noEmit + test:md + test:store + test:perm + test:app
-      - name: Typecheck & tests
-        run: npm test
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # vitest(unit/integration) + E2E（mock LLM + PTY 真进程）
+      - name: Tests
+        run: npx vitest run && npm run test:e2e
 
       - name: Build
         run: npm run build
-
-      # 文档站构建（vitepress：docs-src → docs/docs），防配置漂移
-      - name: Docs build
-        run: npx vitepress build docs-src

@@ -1,20 +1,21 @@
 // Agent 核心：handleSubmit（命令/图片/对话分发）+ runTurn（多轮工具循环）。
 
-import { callLLMStream, getClient } from './llm.js';
+import { callLLMStream, getClient, isImagePayloadError } from './llm.js';
 import {
   commit, appendText, appendThinking, flushText, commitThinking, resetMarkdown, setPhase, setUsageTiming,
-  setError, getState, toggleCtx, togglePerf, toggleThinking, setMeta,
+  setError, getState, toggleCtx, togglePerf, toggleThinking, setMeta, type Phase,
 } from './store.js';
 import { SYSTEM_PROMPT, MAX_TOOL_ROUNDS, MAX_VIEWS_PER_ROUND, API_BASE_URL, getApiKey, getWebApiKey, applyRuntimeConfig, hasExplicitModel } from './config.js';
 import { getSkillListing } from './skills.js';
+import { getAgentListing } from './subagents/loader.js';
 import { parseCommand, handleCommand, type CmdCtx } from './commands.js';
-import { TOOLS_SCHEMAS, TOOLS_REGISTRY, applyBatchImageBudget, disableTool } from './tools.js';
+import { TOOLS_SCHEMAS, TOOLS_REGISTRY, applyBatchImageBudget, disableTool, type ToolSchema, type ToolDef } from './tools.js';
 import { searchWeb } from './websearch.js';
 import { partitionToolCalls, executeBatch, buildToolResultBlock, flushToolResults } from './executor.js';
 import { autosaveSession } from './session.js';
 import { evictOldImages, evictPreviousTurnImages, IMG_EVICTED_MARKER_TOOL, IMG_EVICTED_MARKER_PASTE } from './compaction.js';
 import { maybeUpdateTitle } from './title.js';
-import type { MessageParam, ContentBlock, ToolResultBlock, ToolCall, Usage, Timing } from './types.js';
+import type { MessageParam, ContentBlock, ToolResultBlock, ToolCall, Usage, Timing, CommittedItem } from './types.js';
 
 export interface PastedImg { data: Buffer; mediaType: string; dims: string }
 
@@ -39,11 +40,23 @@ export function buildSystem(): string {
   const webGuide = webParts.length
     ? `可用 web 工具：${webParts.join('、')}。需要实时信息、最新数据、或用户问及网页内容时使用；回答末尾用 markdown 链接引用来源。`
     : '';
-  return SYSTEM_PROMPT + (skillListing ? '\n\n' + skillListing : '') + (webGuide ? '\n\n' + webGuide : '');
+  // 子代理菜单（名字=快速匹配，description=细粒度消歧；与 subagent 工具同注册同注入）
+  const agentListing = getAgentListing();
+  // 委派引导（system prompt 级，GLM 需要显式规则）：措辞对齐用户任务动词
+  //（分析/梳理/了解），把「先侦察后精读」定为默认工作方式
+  const delegationGuide = agentListing
+    ? '## 工作方式：委派广度，亲为深度\n本对话的上下文是稀缺资源——搜索与阅读的中间输出交给 subagent 在独立上下文消化，你只拿概览和候选位置，然后亲自精读关键处下结论。何时委派、任务书怎么写，见 subagent 工具说明。'
+    : '';
+  return SYSTEM_PROMPT +
+    (skillListing ? '\n\n' + skillListing : '') +
+    (webGuide ? '\n\n' + webGuide : '') +
+    (delegationGuide ? '\n\n' + delegationGuide : '') +
+    (agentListing ? '\n\n' + agentListing : '');
 }
 
-function appendUserMessage(text: string): void {
-  // 角色合并（对齐 Python _append_user_message）
+// 追加 user 文本（角色合并，对齐 Python _append_user_message）——参数化 messages，
+// 主对话与子代理循环共用
+function appendUserMsg(messages: MessageParam[], text: string): void {
   const last = messages[messages.length - 1];
   if (last && last.role === 'user') {
     const c = last.content;
@@ -54,6 +67,7 @@ function appendUserMessage(text: string): void {
     messages.push({ role: 'user', content: text });
   }
 }
+function appendUserMessage(text: string): void { appendUserMsg(messages, text); }
 
 function makeCtx(): CmdCtx {
   const s = getState();
@@ -182,16 +196,74 @@ export function repairInterruptedToolCalls(messages: MessageParam[]): void {
   }
 }
 
-// 多轮工具循环（对齐 Python process_user_turn）
-async function runTurn(ref: { current: AbortController | null }): Promise<void> {
-  setError(null); // 新回合清除上一轮的错误提示（此前设置后永不清除，红字常驻）
+// —— Agent 循环（主对话与子代理共用的参数化引擎，对齐 Python process_user_turn）——
+// 主对话：全局 messages + MAIN_SINK（store 直通）+ autosave + title（runTurn 薄包装）。
+// 子代理：独立 messages + 静默 sink（内部事件/流式输出全部丢弃，只回收最终报告）+
+// 无 autosave（不污染主会话）——subagents/runner.ts 组装。轮内机制（strip/evict/
+// 重试降级/看门狗）全部操作传入的 messages/tools，两路零差别共享。参数化重构是
+// 子代理的前置条件：旧 runTurn 与模块级全局焊死，装不下第二个循环实例。
+
+export interface AgentLoopSink {
+  event: (item: CommittedItem) => void;                // UI 事件出口（主=commit 进 scrollback；子=丢弃）
+  phase: (p: Phase) => void;                           // 主=setPhase；子=noop（不抢主对话 phase）
+  usage: (u: Usage | null, t: Timing | null) => void;  // 主=setUsageTiming（状态栏）；子=noop（经返回值上抛）
+  error: (e: string | null) => void;                   // 主=setError（红字）；子=noop（错误在返回值里）
+  text: (delta: string) => void;                       // 流式正文（主=appendText 逐行进 scrollback；子=丢弃）
+  thinking: (delta: string) => void;                   // 流式思考（主=appendThinking；子=丢弃）
+  commitThinking: () => void;                          // 思考段落收束（主=store commitThinking；子=noop）
+  endText: () => void;                                 // 正文收束（主=flushText+resetMarkdown；子=noop）
+}
+
+export interface AgentLoopOpts {
+  messages: MessageParam[];
+  system: string;
+  tools: ToolSchema[];
+  registry: Record<string, ToolDef>;                   // 工具注册表（主=TOOLS_REGISTRY；子=白名单过滤后）
+  model?: string;                                      // 覆盖全局 MODEL（子代理模型路由，缺省用全局）
+  externalSignal?: AbortSignal;                        // 外部取消链（子代理：ESC 级联；主对话不用）
+  streamFn?: typeof callLLMStream;                     // LLM 流注入（测试用假流；缺省真流）
+  maxRounds: number;
+  sink: AgentLoopSink;
+  autosave: boolean;                                   // 主=true；子=false
+  interactive?: boolean;                               // 主=true；子=false（confirm 自动拒绝 + 不登记通用打点）
+  onAssistantMsg?: (messages: MessageParam[]) => void; // 每条 assistant 消息后的钩子（主=maybeUpdateTitle）
+}
+
+export interface AgentLoopResult {
+  status: 'done' | 'interrupted' | 'error' | 'max_rounds';
+  finalText: string;      // 最后一条 assistant 消息文本（子代理即最终报告）
+  rounds: number;         // 实际执行的 LLM 轮数
+  toolCalls: number;      // 工具调用总数（含延迟合成结果的）
+  usage: Usage | null;
+  error: string | null;   // status=error 时的错误原文
+}
+
+// 主对话 sink：与参数化前 runTurn 的 store 直通行为逐一对齐
+export const MAIN_SINK: AgentLoopSink = {
+  event: commit, phase: setPhase, usage: setUsageTiming, error: setError,
+  text: appendText, thinking: appendThinking, commitThinking,
+  endText: () => { flushText(); resetMarkdown(); },
+};
+
+// 提取 assistant 消息的纯文本（子代理 finalText 用）
+function assistantText(m: MessageParam): string {
+  if (!Array.isArray(m.content)) return String(m.content ?? '');
+  return (m.content as ContentBlock[])
+    .filter(b => b && typeof b === 'object' && b.type === 'text')
+    .map(b => String((b as { text?: string }).text ?? ''))
+    .join('');
+}
+
+export async function runAgentLoop(ref: { current: AbortController | null }, opts: AgentLoopOpts): Promise<AgentLoopResult> {
+  const { messages, system, tools, registry, sink } = opts;
+  sink.error(null); // 新回合清除上一轮的错误提示（此前设置后永不清除，红字常驻）
   stripHistoricalThinking(messages);
   repairInterruptedToolCalls(messages);
   // 轮入口驱逐历史图片（图片是当轮工作材料，观察已由图片轮 thinking 承载）。
   // 必须在 strip 之后：strip 依赖粘贴图的存在判定图片轮、保留其 thinking。
   const evictedImages = evictPreviousTurnImages(messages);
   if (evictedImages > 0) {
-    commit({ kind: 'system', tone: 'muted', text: `🗜️ 已释放 ${evictedImages} 张历史图片（观察记录保留，原图可重新 view）` });
+    sink.event({ kind: 'system', tone: 'muted', text: `🗜️ 已释放 ${evictedImages} 张历史图片（观察记录保留，原图可重新 view）` });
   }
   let round = 0;
   // turn 累加：整个 turn（含多次工具调用 LLM）的总 usage/timing，而非单次 LLM。
@@ -200,15 +272,24 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
   let turnDecode = 0;
   let firstTtft: number | null = null;
   let lastUsage: Usage | null = null;
+  let toolCallCount = 0;
+  let lastText = '';
   const turnStart = performance.now();
   let roundRetries = 0; // 空响应等可重试错误的已重试次数
   let prunedImages = false; // 是否已做过降级（释放旧图）重试
+  let selfSearchRounds = 0; // 连续自主搜索轮数（主对话路由纠偏用，见 tool_call 分支）
   while (true) {
     round++;
-    if (round > MAX_TOOL_ROUNDS) {
-      commit({ kind: 'system', text: `已达最大轮次限制（${MAX_TOOL_ROUNDS}），停止`, tone: 'warn' });
-      setPhase('idle');
-      return;
+    // 外部取消链（子代理）：轮间检查——工具执行阶段被 ESC 中止时，下一轮不再发起
+    if (opts.externalSignal?.aborted) {
+      sink.event({ kind: 'system', text: '已暂停 — 可继续输入', tone: 'muted' });
+      sink.phase('idle');
+      return { status: 'interrupted', finalText: lastText, rounds: round - 1, toolCalls: toolCallCount, usage: lastUsage, error: null };
+    }
+    if (round > opts.maxRounds) {
+      sink.event({ kind: 'system', text: `已达最大轮次限制（${opts.maxRounds}），停止`, tone: 'warn' });
+      sink.phase('idle');
+      return { status: 'max_rounds', finalText: lastText, rounds: round - 1, toolCalls: toolCallCount, usage: lastUsage, error: null };
     }
 
     // 即看即释：上一轮消费过的图片换占位（观察已在该轮 thinking 里），只保留
@@ -216,23 +297,28 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
     evictOldImages(messages, 1);
 
     const controller = new AbortController();
+    // 外部取消链：流内触发（ESC 中止当前 LLM 流，无需等轮间检查）
+    if (opts.externalSignal) {
+      if (opts.externalSignal.aborted) controller.abort();
+      else opts.externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     ref.current = controller;
-    setPhase('thinking');
+    sink.phase('thinking');
 
     let outcome: Outcome | null = null;
+    const streamFn = opts.streamFn ?? ((m: MessageParam[], t: unknown[], s: string, sig: AbortSignal, model?: string) => callLLMStream(m, t, s, sig, model));
     try {
-      for await (const ev of callLLMStream(messages, TOOLS_SCHEMAS, system, controller.signal)) {
+      for await (const ev of streamFn(messages, tools, system, controller.signal, opts.model)) {
         if (ev.type === 'text') {
           // 回复开始：思考 commit 进 scrollback 保留，再清窗口
-          commitThinking();
-          appendText(ev.text);
+          sink.commitThinking();
+          sink.text(ev.text);
         } else if (ev.type === 'thinking') {
-          appendThinking(ev.text); // 内部按 showThinking 决定是否进 scrollback
+          sink.thinking(ev.text); // 主 sink 内部按 showThinking 决定是否进 scrollback
         } else {
           // done / tool_call / interrupted：思考 commit + flush + 累加 turn 指标。
-          commitThinking();
-          flushText();
-          resetMarkdown();
+          sink.commitThinking();
+          sink.endText();
           if (ev.usage) {
             turnOutput += (ev.usage.output_tokens ?? 0);
             lastUsage = ev.usage;
@@ -243,25 +329,28 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
           }
           // turn 视图：input/cache 取最后（当前 context），output 累加；ttft 首次，decode 累加，total 整个 turn
           const turnUsage: Usage | null = lastUsage ? { ...lastUsage, output_tokens: turnOutput } : ev.usage;
+          lastUsage = turnUsage; // 结果也带 turn 累计（sink 与返回值一致，子代理统计用）
           const turnTiming: Timing = {
             ttft: firstTtft,
             decode_time: turnDecode > 0 ? turnDecode : null,
             total: performance.now() - turnStart,
           };
-          setUsageTiming(turnUsage, turnTiming);
+          sink.usage(turnUsage, turnTiming);
           messages.push(ev.assistant_msg);
-          maybeUpdateTitle(messages); // 后台生成会话主题（fire-and-forget，不阻塞）
+          lastText = assistantText(ev.assistant_msg);
+          opts.onAssistantMsg?.(messages); // 主对话：后台生成会话主题（fire-and-forget，不阻塞）
           outcome = ev;
           break;
         }
       }
     } catch (e) {
-      // 可重试错误（如 vLLM 多图请求返回空响应）：重试 2 次，仍失败才报错。
-      // 不重试本轮不计轮次（round 回退，continue 后再 ++）。
-      if ((e as { retryable?: boolean }).retryable === true && roundRetries < 2) {
+      // 可重试错误（空响应 / 图片 payload 400——坏图毒化历史，重试链尾有 evict 降级）：
+      // 重试 2 次，仍失败才报错。不重试本轮不计轮次（round 回退，continue 后再 ++）。
+      const retryable = (e as { retryable?: boolean }).retryable === true || isImagePayloadError(e);
+      if (retryable && roundRetries < 2) {
         roundRetries++;
         round--;
-        commit({ kind: 'system', tone: 'warn', text: `⚠️ ${(e as Error).message}——自动重试 ${roundRetries}/2` });
+        sink.event({ kind: 'system', tone: 'warn', text: `⚠️ ${(e as Error).message}——自动重试 ${roundRetries}/2` });
         await new Promise(r => setTimeout(r, 1500 * roundRetries)); // 退避：间歇性服务端故障（负载/显存波动）立刻重发易撞同一窗口
         continue;
       }
@@ -269,31 +358,35 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
       // payload 的视觉编码在压力下会被静默丢弃），再试最后一次。每个 turn 只降级一次。
       // keepRecent=0：即看即释后上下文本就只有当前批，降级连它也释放——
       // 牺牲当批可见性换会话存活，恢复后模型可重新 view。
-      if ((e as { retryable?: boolean }).retryable === true && !prunedImages) {
+      if (retryable && !prunedImages) {
         const n = evictOldImages(messages, 0);
         if (n > 0) {
           prunedImages = true;
           round--;
-          commit({ kind: 'system', tone: 'warn', text: `⚠️ 连续空响应——已释放 ${n} 张较早的图片以缩小请求（路径在调用记录中，需要时可重新 view），降级重试` });
+          sink.event({ kind: 'system', tone: 'warn', text: `⚠️ 连续空响应——已释放 ${n} 张较早的图片以缩小请求（路径在调用记录中，需要时可重新 view），降级重试` });
           continue;
         }
       }
       const msg = e instanceof Error ? e.message : String(e);
-      setError(`[错误] ${msg}`);
+      sink.error(`[错误] ${msg}`);
       ref.current = null;
-      setPhase('idle');
-      return;
+      sink.phase('idle');
+      return { status: 'error', finalText: lastText, rounds: round - 1, toolCalls: toolCallCount, usage: lastUsage, error: msg };
     }
     ref.current = null;
     roundRetries = 0; // 本轮成功，重置重试计数
 
-    if (!outcome) { setPhase('idle'); return; }
+    // 无结果兜底（理论不可达：循环内要么 break 出 outcome 要么 throw）
+    if (!outcome) {
+      sink.phase('idle');
+      return { status: 'error', finalText: lastText, rounds: round - 1, toolCalls: toolCallCount, usage: lastUsage, error: null };
+    }
 
     if (outcome.type === 'interrupted') {
-      appendUserMessage('[Request interrupted by user]');
-      commit({ kind: 'system', text: '已暂停 — 可继续输入', tone: 'muted' });
-      setPhase('idle');
-      return;
+      appendUserMsg(messages, '[Request interrupted by user]');
+      sink.event({ kind: 'system', text: '已暂停 — 可继续输入', tone: 'muted' });
+      sink.phase('idle');
+      return { status: 'interrupted', finalText: lastText, rounds: round, toolCalls: toolCallCount, usage: lastUsage, error: null };
     }
 
     if (outcome.type === 'tool_call') {
@@ -311,43 +404,75 @@ async function runTurn(ref: { current: AbortController | null }): Promise<void> 
         viewBudget--;
         return true;
       });
-      const batches = partitionToolCalls(capped);
+      toolCallCount += capped.length;
+      const batches = partitionToolCalls(capped, registry);
       const allBlocks: ToolResultBlock[] = [];
       for (const batch of batches) {
-        for (const tc of batch.calls) commit({ kind: 'tool_start', call: tc });
+        for (const tc of batch.calls) sink.event({ kind: 'tool_start', call: tc });
         // ask 工具内部 setPhase('ask_pending')；其他工具显示执行 spinner
-        if (!(batch.calls.length === 1 && batch.calls[0].name === 'ask')) setPhase('tool_running');
-        const results = await executeBatch(batch);
+        if (!(batch.calls.length === 1 && batch.calls[0].name === 'ask')) sink.phase('tool_running');
+        const results = await executeBatch(batch, registry, opts.interactive !== false);
         // 批次像素预算摊薄：多图共享预算防服务器挂起（单张原图直传不受影响）
         const downscaled = await applyBatchImageBudget(results.map(r => r[1]));
         if (downscaled > 0) {
-          commit({ kind: 'system', tone: 'muted', text: `🗜️ 批次含多图，已按预算降采样 ${downscaled} 张（原图在磁盘，单张重看可获全分辨率）` });
+          sink.event({ kind: 'system', tone: 'muted', text: `🗜️ 批次含多图，已按预算降采样 ${downscaled} 张（原图在磁盘，单张重看可获全分辨率）` });
         }
         for (const [tc, res] of results) {
-          commit({ kind: 'tool_result', call: tc, result: res });
+          sink.event({ kind: 'tool_result', call: tc, result: res });
           allBlocks.push(buildToolResultBlock(tc, res));
         }
       }
       // 延迟的 view：合成提示结果（契约要求每个 tool_use 都有配对 tool_result）
       for (const tc of deferred) {
-        commit({ kind: 'tool_start', call: tc });
+        sink.event({ kind: 'tool_start', call: tc });
         const res = { type: 'error' as const, message: `本单轮图片查看已达上限（${MAX_VIEWS_PER_ROUND} 张），本次调用已延迟未执行——请在下一轮分批继续（每批 ≤5 张更稳）` };
-        commit({ kind: 'tool_result', call: tc, result: res });
+        sink.event({ kind: 'tool_result', call: tc, result: res });
         allBlocks.push(buildToolResultBlock(tc, res));
+      }
+      toolCallCount += deferred.length;
+      // 自主搜索过载纠偏（仅主对话）：连续多轮自己做搜索类调用而不委派时，在最后
+      // 一个工具结果尾部注入提示教它改用 subagent——上下文经济学经运行时反馈送达
+      //（实测 GLM 对静态描述的委派意愿不足，需要即时 nudging）。委派了则清零。
+      if (opts.interactive !== false && 'subagent' in registry) {
+        const isSearch = (tc: ToolCall) =>
+          tc.name === 'read' || tc.name === 'view' ||
+          (tc.name === 'bash' && /(^|[\s;&|])(grep|egrep|rg|fgrep|find|ls|cat|head|tail|fd|wc)\b/.test(String(tc.input.command ?? '')));
+        if (capped.some(tc => tc.name === 'subagent')) {
+          selfSearchRounds = 0;
+        } else if (capped.filter(isSearch).length >= 2) {
+          selfSearchRounds++;
+          if (selfSearchRounds >= 4) {
+            const n = selfSearchRounds;
+            selfSearchRounds = 0;
+            const hint = `\n\n[提示] 你已连续 ${n} 轮自主搜索，中间输出正在快速消耗本对话上下文。建议改用 subagent 工具（explore，可并行派出多个，按目录/类型分工）批量侦察——只要概览和候选位置，中间过程不进本对话；关键位置再由你亲自精读。`;
+            const last = allBlocks[allBlocks.length - 1];
+            if (last && typeof last.content === 'string') last.content += hint;
+            else if (last && Array.isArray(last.content)) last.content.push({ type: 'text', text: hint });
+          }
+        }
       }
       // 同一轮所有 tool_use 的结果必须合并成一条紧邻的 user 消息（Anthropic 契约：
       // tool_result 必须紧随 tool_use 出现在同一条消息里）。拆多条会被 DeepSeek
       // 等严格兼容端点以 400（tool_use without tool_result）拒绝。
       flushToolResults(allBlocks, messages);
-      autosaveSession(messages);
+      if (opts.autosave) autosaveSession(messages);
       continue; // 下一轮 LLM
     }
 
     // done：最终文本回答
-    autosaveSession(messages);
-    setPhase('idle');
-    return;
+    if (opts.autosave) autosaveSession(messages);
+    sink.phase('idle');
+    return { status: 'done', finalText: lastText, rounds: round, toolCalls: toolCallCount, usage: lastUsage, error: null };
   }
+}
+
+// 主对话回合：全局 messages/system + 主 sink + autosave + title，行为与参数化前完全一致
+async function runTurn(ref: { current: AbortController | null }): Promise<void> {
+  await runAgentLoop(ref, {
+    messages, system, tools: TOOLS_SCHEMAS, registry: TOOLS_REGISTRY,
+    maxRounds: MAX_TOOL_ROUNDS, sink: MAIN_SINK, autosave: true,
+    onAssistantMsg: maybeUpdateTitle,
+  });
 }
 
 // web_search 可用性探测（main 启动 / onboarding 完成后调用）：不可用则从工具集

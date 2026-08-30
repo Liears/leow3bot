@@ -85,7 +85,9 @@ export function compactOldToolResults(messages: MessageParam[], keepRecent = 6):
     for (const b of content as ContentBlock[]) {
       if (b.type !== 'tool_result') continue;
       const c = String((b as { content: unknown }).content ?? '');
-      if (c.length > 200 && !c.includes('[已压缩]')) {
+      // 幂等守卫按写入标记的真实形态匹配（写入的是 "[已压缩，原始内容共N字符]"——
+      // 此前守卫找 "[已压缩]"（带闭括号）永不命中，二次压缩会反复重切同一段）
+      if (c.length > 200 && !c.includes('[已压缩')) {
         (b as { content: unknown }).content = c.slice(0, 150) + `... [已压缩，原始内容共${c.length}字符]`;
         compacted++;
       }

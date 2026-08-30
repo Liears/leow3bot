@@ -37,13 +37,29 @@ export default function MessageList({ item }: { item: CommittedItem }) {
           ))}
         </Box>
       );
-    case 'tool_start':
+    case 'tool_start': {
+      // subagent 特例（CC 的 Task(Explore) 风格）：类型进括号，摘要用一句话
+      // description（无则 prompt 前缀）——长 prompt 绝不整坨 JSON 进 scrollback
+      if (item.call.name === 'subagent') {
+        const at = typeof item.call.input.agent_type === 'string' && item.call.input.agent_type
+          ? item.call.input.agent_type : 'explore';
+        const d = typeof item.call.input.description === 'string' && item.call.input.description.trim()
+          ? item.call.input.description
+          : String(item.call.input.prompt ?? '').replace(/\s+/g, ' ');
+        return (
+          <Box marginTop={1}>
+            <Text color={ACCENT} bold>{SYM_TOOL} subagent({at}) </Text>
+            <Text dimColor>{clip(d, 60)}</Text>
+          </Box>
+        );
+      }
       return (
         <Box marginTop={1}>
           <Text color={ACCENT} bold>{SYM_TOOL} {item.call.name} </Text>
-          <Text dimColor>{summarizeInput(item.call.input)}</Text>
+          <Text dimColor>{summarizeInput(item.call.name, item.call.input)}</Text>
         </Box>
       );
+    }
     case 'tool_result':
       return (
         <Box>
@@ -91,9 +107,22 @@ export default function MessageList({ item }: { item: CommittedItem }) {
   }
 }
 
-function summarizeInput(input: Record<string, unknown>): string {
-  const s = JSON.stringify(input);
-  return s.length > 70 ? s.slice(0, 67) + '...' : s;
+/** 压平空白并截断（超长加省略号） */
+function clip(s: string, max: number): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  return t.length > max ? t.slice(0, max - 1) + '…' : t;
+}
+
+function summarizeInput(name: string, input: Record<string, unknown>): string {
+  // 常用工具取最代表调用的一个字段（对齐 CC 的 Tool(arg) 风格），其余回退 JSON
+  const prefer: Record<string, string> = {
+    bash: 'command', read: 'path', view: 'path', edit: 'path', write: 'path',
+    web_search: 'query', web_fetch: 'url', skill: 'name', ask: 'question',
+  };
+  const key = prefer[name];
+  const v = key ? input[key] : undefined;
+  const s = typeof v === 'string' && v.trim() ? v : JSON.stringify(input);
+  return clip(s, 70);
 }
 
 function summarizeResult(result: unknown): string {
@@ -101,6 +130,5 @@ function summarizeResult(result: unknown): string {
   if (typeof result === 'string') s = result;
   else if (result && typeof result === 'object' && 'output' in result) s = String((result as { output: unknown }).output);
   else s = JSON.stringify(result);
-  s = s.replace(/\n/g, ' ').slice(0, 120);
-  return s;
+  return clip(s, 120);
 }
