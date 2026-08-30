@@ -71,23 +71,34 @@ interface PartialBlock {
   input_parts: string;
 }
 
+// 图片 payload 错误判定（实测事故：智谱 400 code 1210「图片输入格式/解析错误」——
+// 坏图一旦进入消息历史，之后每轮请求都带它、每轮都 400，子代理/主对话被毒死）。
+// 供 agent 循环把这类错误按 retryable 处理，接入既有降级链（重试 → evictOldImages
+// 释放坏图 → 再试）。判定从宽：图片字样 + 4xx 语义即可，误判的代价只是一次无害重试。
+export function isImagePayloadError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  return /图片输入|image[_\s-]?(input|format|parse)|\[1210\]/i.test(e.message);
+}
+
 export async function* callLLMStream(
   messages: MessageParam[],
   tools: unknown[],
   system: string,
   signal: AbortSignal,
+  model: string = MODEL,
 ): AsyncGenerator<StreamEvent> {
   // max_tokens 错误驱动自适应（code-review F8）：默认发全局值；端点若因超限 400
   // （智谱格式 "max_tokens参数非法：限制数值范围[1,131072]"），提取上限 → 按模型
   // 缓存 → 重试一次。400 是请求级拒绝、首个流不会产出任何事件，yield* 重放安全。
-  const limit = getModelMaxTokens(MODEL);
+  // model 参数：子代理模型路由（缺省全局 MODEL）。
+  const limit = getModelMaxTokens(model);
   try {
-    yield* llmStreamOnce(messages, tools, system, signal, limit);
+    yield* llmStreamOnce(messages, tools, system, signal, limit, model);
   } catch (e: unknown) {
     const adapted = adaptMaxTokensLimit(e, limit);
     if (adapted === null) throw e;
-    setModelMaxTokens(MODEL, adapted); // 静默学习：同模型后续（含下次启动）永不复撞
-    yield* llmStreamOnce(messages, tools, system, signal, adapted);
+    setModelMaxTokens(model, adapted); // 静默学习：同模型后续（含下次启动）永不复撞
+    yield* llmStreamOnce(messages, tools, system, signal, adapted, model);
   }
 }
 
@@ -111,6 +122,7 @@ async function* llmStreamOnce(
   system: string,
   signal: AbortSignal,
   maxTokens: number,
+  model: string = MODEL,
 ): AsyncGenerator<StreamEvent> {
   const t0 = performance.now();
   let tFirst: number | null = null;
@@ -121,7 +133,7 @@ async function* llmStreamOnce(
 
   const stream = getClient().messages.stream(
     {
-      model: MODEL,
+      model,
       max_tokens: maxTokens,
       temperature: TEMPERATURE,
       ...(TOP_P != null ? { top_p: TOP_P } : {}),

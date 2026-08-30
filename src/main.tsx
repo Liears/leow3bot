@@ -11,10 +11,12 @@ import { render } from 'ink';
 import App from './components/App.js';
 import { commit, setMeta, setPhase } from './store.js';
 import { loadSkills, SKILLS_REGISTRY } from './skills.js';
+import { loadAgents, AGENTS_REGISTRY } from './subagents/loader.js';
 import { setSystem, buildSystem, probeWebSearchAvailability, autoDetectModel } from './agent.js';
 import { getWelcomeItems } from './commands.js';
 import { TOOLS_REGISTRY } from './tools.js';
-import { getSkillDirs, MODEL, getApiKey } from './config.js';
+import { killActiveBash } from './tools.js';
+import { getSkillDirs, getAgentDirs, MODEL, getApiKey } from './config.js';
 import { resumeSession, resumeLatest, activateResume, setSessionTitle } from './session.js';
 import { initTitleState } from './title.js';
 import type { MessageParam } from './types.js';
@@ -44,6 +46,7 @@ if (args[0] === '--resume' || args[0] === '-r') {
 }
 
 loadSkills(getSkillDirs());
+loadAgents(getAgentDirs()); // agent 定义先于 buildSystem 加载（菜单注入用）
 setSystem(buildSystem());
 
 // 首次启动引导：加载链（~/.leow3bot → 项目根 config.json）走完仍无 apiKey =
@@ -68,7 +71,8 @@ if (resumed) {
   const cwdChanged = process.cwd() !== prevCwd;
   if (cwdChanged) {
     loadSkills(getSkillDirs()); // 项目级 skill 按新目录重扫
-    setSystem(buildSystem()); // 重建系统提示词（skill 列表随新目录变化）
+    loadAgents(getAgentDirs()); // 项目级 agent 定义同理
+    setSystem(buildSystem()); // 重建系统提示词（skill/agent 列表随新目录变化）
     setMeta({ model: MODEL, nTools: Object.keys(TOOLS_REGISTRY).length, nSkills: SKILLS_REGISTRY.size, cwd: process.cwd() }); // 状态栏显示新目录
   }
   commit({
@@ -81,6 +85,11 @@ if (resumed) {
   // phase，新用户直进空 key 对话（code-review F1）；配置完自然有会话可选
   setPhase('session_picker'); // render 前设置，App 首帧即选择器
 }
+
+// 进程回收钩子：TUI raw mode 下 Ctrl-C 不向子进程发 SIGINT，leo 退出时
+// 运行中的 bash 命令（含孙进程）不回收会变孤儿（实测安静的 python 任务
+// 不撞 SIGPIPE 会一直活着）。killActiveBash 按进程组 SIGKILL，同步可exit内执行。
+process.on('exit', () => killActiveBash());
 
 // web_search 可用性探测（fire-and-forget 不阻塞启动）。onboarding 未完成
 // （apiKey 为空）时跳过——空 key 必失败会误杀 web_search 且事后无法恢复，

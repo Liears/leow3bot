@@ -1,7 +1,6 @@
 // 工具注册表 + 实现（移植 tools.py）。sharp 替代 PIL；ask 异步化（Input resolve）。
 
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import { readFile as fsReadFile, writeFile as fsWriteFile, mkdir } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -11,8 +10,6 @@ import { persistToolOutput } from './lib/persist.js';
 import { getSkillPrompt, SKILLS_REGISTRY } from './skills.js';
 import { commit, setPhase, setAskResolver } from './store.js';
 import { searchWeb, readUrl } from './websearch.js';
-
-const execAsync = promisify(exec);
 
 export interface ToolSchema {
   name: string;
@@ -36,10 +33,26 @@ export interface ToolDef {
 // 超长输出策略（对齐 Claude Code）：只保留头部 + 告诉模型截掉了多少行，
 // 完整内容落盘到系统临时目录（lib/persist.ts，与 web_fetch 共用），
 // tool_result 带路径——模型需要时用 read 工具取回，截断只是"默认展示窗口"。
+//
+// 进程生命周期（进程组方案）：每条命令 detached 起独立进程组（pgid = pid），
+// 超时与 leo 退出都按组杀（kill(-pgid)）——孙进程（python 等）不漏。
+// 背景：TUI raw mode 下 Ctrl-C 不向子进程发 SIGINT，exec 只杀直接子进程且
+// 不回收孙进程，安静的后台任务（写文件日志的 python）实测会变孤儿一直活着。
+// 显式后台是逃生门：setsid nohup ... & 新建会话脱组，leo 退出不杀。
+
+const ACTIVE_BASH_PGIDS = new Set<number>();
+
+/** 回收全部运行中的 bash 命令进程组（main.tsx 的 exit 钩子调用）。 */
+export function killActiveBash(): void {
+  for (const pgid of ACTIVE_BASH_PGIDS) {
+    try { process.kill(-pgid, 'SIGKILL'); } catch { /* 组已消失 */ }
+  }
+  ACTIVE_BASH_PGIDS.clear();
+}
 
 async function runBash(command: string, timeoutSec?: number) {
   const cwdTag = `[cwd: ${process.cwd()}]`;
-  // 参数防御 + 钳制 5-300s，默认 60s。NaN（模型传非数值）会导致 exec 无超时挂死，必须挡
+  // 参数防御 + 钳制 5-300s，默认 60s。NaN（模型传非数值）会导致无超时挂死，必须挡
   const n = Number(timeoutSec);
   const sec = Number.isFinite(n) ? n : 60;
   const timeoutMs = Math.min(300, Math.max(5, Math.floor(sec))) * 1000;
@@ -55,19 +68,51 @@ async function runBash(command: string, timeoutSec?: number) {
     }
     return { type: 'bash' as const, command, output: body };
   };
-  try {
-    const { stdout, stderr } = await execAsync(command, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
-    let out = stdout;
-    if (stderr) out += '\n[stderr] ' + stderr;
-    return finish(cwdTag + '\n' + (out || '(无输出)'));
-  } catch (e: unknown) {
-    const err = e as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
-    if (err.killed) return { type: 'bash' as const, command, output: cwdTag + `\n错误：命令执行超时（${timeoutMs / 1000}秒，可用 timeout 参数延长至最多 300 秒，或用 nohup ... & 转后台）` };
-    let out = err.stdout || '';
-    if (err.stderr) out += '\n[stderr] ' + err.stderr;
-    if (err.code) out += `\n[exit code: ${err.code}]`;
-    return finish(cwdTag + '\n' + (out || err.message || String(e)));
-  }
+  return new Promise<{ type: 'bash'; command: string; output: string }>(resolve => {
+    const child = spawn('/bin/sh', ['-c', command], {
+      detached: true, // 独立进程组：超时/退出按组级联，孙进程不漏
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const pgid = child.pid;
+    if (pgid) ACTIVE_BASH_PGIDS.add(pgid);
+    let stdout = '';
+    let stderr = '';
+    let overCap = false; // 输出超缓冲上限：停止累积（防 yes 类无限输出撑爆内存），标注即可
+    const CAP = 5 * 1024 * 1024;
+    child.stdout?.on('data', (d: Buffer) => {
+      if (stdout.length >= CAP) { overCap = true; return; }
+      stdout += d.toString();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      if (stderr.length >= CAP) { overCap = true; return; }
+      stderr += d.toString();
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // 整组先 TERM（给清理机会）2 秒后 KILL 兜底
+      try { if (pgid) process.kill(-pgid, 'SIGTERM'); } catch { /* noop */ }
+      setTimeout(() => { try { if (pgid) process.kill(-pgid, 'SIGKILL'); } catch { /* noop */ } }, 2000);
+    }, timeoutMs);
+    child.on('error', e => {
+      clearTimeout(timer);
+      if (pgid) ACTIVE_BASH_PGIDS.delete(pgid);
+      resolve({ type: 'bash' as const, command, output: cwdTag + `\n错误：${e.message}` });
+    });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (pgid) ACTIVE_BASH_PGIDS.delete(pgid);
+      if (timedOut) {
+        resolve({ type: 'bash' as const, command, output: cwdTag + `\n错误：命令执行超时（${timeoutMs / 1000}秒，已整组终止）。可用 timeout 参数延长至最多 300 秒；更长的任务用 setsid nohup ... & 转后台（脱离 leo 生命周期，leo 退出不会杀它）` });
+        return;
+      }
+      let out = stdout;
+      if (stderr) out += '\n[stderr] ' + stderr;
+      if (overCap) out += `\n[输出超过 ${CAP} 字符缓冲上限，超出部分未收集]`;
+      if (code) out += `\n[exit code: ${code}]`;
+      resolve(finish(cwdTag + '\n' + (out || '(无输出)')));
+    });
+  });
 }
 
 export async function compressImage(raw: Buffer, _ext: string): Promise<{ data: Buffer; mediaType: string; width: number; height: number }> {
@@ -321,7 +366,7 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
     concurrencySafe: false,
     schema: {
       name: 'bash',
-      description: '在本地执行 shell 命令并返回输出。注意：工作目录为当前会话目录（见输出开头的 [cwd]；--resume 恢复会话时会切换到会话对应目录；每次调用都是全新 shell，cd 不会跨调用保留），请使用绝对路径或相对当前目录的路径。长耗时命令（脚本/训练/安装）请传 timeout（秒，5-300，默认 60）；超过 300 秒的用 nohup ... & 转后台',
+      description: '在本地执行 shell 命令并返回输出。注意：工作目录为当前会话目录（见输出开头的 [cwd]；--resume 恢复会话时会切换到会话对应目录；每次调用都是全新 shell，cd 不会跨调用保留），请使用绝对路径或相对当前目录的路径。长耗时命令（脚本/训练/安装）请传 timeout（秒，5-300，默认 60）；超过 300 秒的用 setsid nohup ... & 转后台（脱离 leo 生命周期——leo 退出时前台运行中的命令会被整组终止，后台任务不受影响）',
       input_schema: {
         type: 'object',
         properties: {
@@ -405,6 +450,25 @@ export const TOOLS_REGISTRY: Record<string, ToolDef> = {
       name: 'ask',
       description: '向用户提问，等待用户回复后继续。遇到不确定的问题、需要用户确认或选择时使用。',
       input_schema: { type: 'object', properties: { question: { type: 'string', description: '要问用户的问题' } }, required: ['question'] },
+    },
+  },
+  subagent: {
+    // 惰性加载 runner 防循环依赖（runner → agent → tools；静态 import 会成环）
+    function: (a) => import('./subagents/runner.js').then(m =>
+      m.runSubagent(a as { prompt?: unknown; agent_type?: unknown; description?: unknown })),
+    concurrencySafe: true, // 相邻多个 subagent 调用 → executor 批次 Promise.all 并行
+    schema: {
+      name: 'subagent',
+      description: '委派子代理在独立上下文中执行广度型调查，只返回报告——搜索与阅读的中间输出不进本对话。判断标准是扇出成本：答案需要翻找很多可能的位置（整个目录、陌生项目、跨多文件定位），或阅读会产生大量你只需要结论的输出时，先派 subagent（explore，一轮可并行多个，按目录/类型分工；同时运行上限 3，超出自动排队依次执行），拿到概览和候选位置后亲自精读关键处。已知位置的单点查询、两三个文件的快速查看，直接自己做。不适用：需要当前对话背景、需要修改文件的任务。子代理看不到对话历史、无法提问——prompt 必须自包含（目标、范围、背景、期望输出）。已委派的搜索不要自己做，等结果。',
+      input_schema: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: '委派任务书，由你撰写——子代理只能看到这条消息，看不到我们的对话。必须自包含：任务目标；范围（目录/文件/搜索方向）；必要背景（把本对话中相关的用户要求、已知结论、约束提炼进来）；期望输出格式' },
+          agent_type: { type: 'string', description: '子代理类型（默认 explore），可用类型见系统提示' },
+          description: { type: 'string', description: '一句话任务摘要（UI 显示）' },
+        },
+        required: ['prompt'],
+      },
     },
   },
   web_search: {

@@ -9,7 +9,10 @@ import StatusBar from './StatusBar.js';
 import SkillsPicker from './SkillsPicker.js';
 import SessionPicker from './SessionPicker.js';
 import ModelPicker from './ModelPicker.js';
+import SubagentPicker from './SubagentPicker.js';
+import ActivityPanel from './ActivityPanel.js';
 import { handleSubmit, abortRef, buildSystem, setSystem, probeWebSearchAvailability } from '../agent.js';
+import { abortAllSubagents } from '../subagents/runner.js';
 import Onboarding from './Onboarding.js';
 import { applyRuntimeConfig, API_BASE_URL } from '../config.js';
 import { TOOLS_REGISTRY } from '../tools.js';
@@ -26,10 +29,11 @@ export default function App() {
   const s = useStore();
   const { exit } = useApp();
 
-  // ESC 中断流式（全局监听，任何 phase 都生效）
+  // ESC 中断流式（全局监听，任何 phase 都生效；子代理运行期一并级联中止）
   useInput((_input, key) => {
-    if (key.escape && abortRef.current) {
-      abortRef.current.abort();
+    if (key.escape) {
+      if (abortRef.current) abortRef.current.abort();
+      abortAllSubagents();
     }
   });
 
@@ -55,10 +59,16 @@ export default function App() {
           <Box gap={1} marginTop={1}>
             <Text color={ACCENT}><Spinner type="dots" /></Text>
             <Text dimColor italic>
-              {s.phase === 'thinking' ? `${SYM_THINK} thinking…` : s.phase === 'tool_running' ? '⏺ 执行工具…' : '生成中…'}
+              {s.subagents.length > 0
+                ? `⏺ 子代理运行中（${s.subagents.length}）…`
+                : s.phase === 'thinking' ? `${SYM_THINK} thinking…` : s.phase === 'tool_running' ? '⏺ 执行工具…' : '生成中…'}
             </Text>
           </Box>
         ) : null}
+
+        {/* 运行时活动面板（工具打点 + 子代理状态，每秒刷新；不进 scrollback）。
+            marginTop 0 与上方 spinner 行贴紧成组 */}
+        <ActivityPanel />
 
         {s.error ? (
           <Box marginTop={1}><Text color="red">{s.error}</Text></Box>
@@ -99,6 +109,10 @@ export default function App() {
 
         {s.phase === 'model_picker' ? (
           <ModelPicker />
+        ) : null}
+
+        {s.phase === 'subagent_picker' ? (
+          <SubagentPicker />
         ) : null}
 
         {s.phase === 'session_picker' ? (

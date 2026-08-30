@@ -4,7 +4,7 @@
 import { useSyncExternalStore } from 'react';
 import type { CommittedItem, Usage, Timing, Meta } from './types.js';
 
-export type Phase = 'idle' | 'thinking' | 'streaming' | 'tool_running' | 'ask_pending' | 'confirm_pending' | 'skills_picker' | 'session_picker' | 'onboarding' | 'model_picker';
+export type Phase = 'idle' | 'thinking' | 'streaming' | 'tool_running' | 'ask_pending' | 'confirm_pending' | 'skills_picker' | 'session_picker' | 'onboarding' | 'model_picker' | 'subagent_picker';
 
 export interface State {
   committed: CommittedItem[];      // 只增 → <Static> → 原生 scrollback
@@ -20,12 +20,33 @@ export interface State {
   mdInCode: boolean;                          // markdown 代码块状态（跨行跟踪 ```，逐行 commit 用）
   askResolver: ((s: string) => void) | null;  // ask 工具的临时 resolver
   error: string | null;
+  subagents: SubagentStatus[];                // 运行中子代理的实时状态（动态区面板行，结束即移除）
+  runningTools: RunningTool[];                // 运行中工具的实时打点（面板行，每秒刷新，结束即移除）
+}
+
+/** 运行中工具打点（ActivityPanel 通用行；subagent 有专属行不进此表） */
+export interface RunningTool {
+  key: number;        // 自增序号
+  name: string;       // 工具名
+  summary: string;    // 最代表调用的入参摘要（如 bash 的命令）
+  startedAt: number;  // 启动时间戳（渲染时算耗时）
+}
+
+/** 子代理运行状态（SubagentPanel 每行一个；CC 式动态面板，不进 scrollback） */
+export interface SubagentStatus {
+  key: string;          // 运行标识（runner 内部序号）
+  name: string;         // agent 类型名
+  desc: string;         // 一句话任务摘要
+  rounds: number;       // 已执行 LLM 轮数
+  toolCalls: number;    // 已执行工具次数
+  activity: string;     // 最近一次工具活动（如 "bash: grep -rn auth src/"）
+  startedAt: number;    // 启动时间戳（渲染时算耗时）
 }
 
 const initial: State = {
   committed: [], streamingText: '', streamingThinking: '', phase: 'idle',
   usage: null, timing: null, showCtx: true, showPerf: true, showThinking: true,
-  meta: null, mdInCode: false, askResolver: null, error: null,
+  meta: null, mdInCode: false, askResolver: null, error: null, subagents: [], runningTools: [],
 };
 
 let state: State = initial;
@@ -97,6 +118,13 @@ export const toggleThinking = () => set(s => ({ showThinking: !s.showThinking })
 export const setAskResolver = (r: ((s: string) => void) | null) => set({ askResolver: r });
 export const setMeta = (m: Meta) => set({ meta: m });
 export const setError = (e: string | null) => set({ error: e });
+// 子代理状态面板（runner 维护生命周期：启动登记 → 事件更新 → 结束移除）
+export const subagentStart = (e: SubagentStatus) => set(s => ({ subagents: [...s.subagents.filter(x => x.key !== e.key), e] }));
+export const subagentUpdate = (key: string, patch: Partial<SubagentStatus>) => set(s => ({ subagents: s.subagents.map(x => x.key === key ? { ...x, ...patch } : x) }));
+export const subagentEnd = (key: string) => set(s => ({ subagents: s.subagents.filter(x => x.key !== key) }));
+// 工具运行打点（executor 维护生命周期；subagent 内部工具不登记——专属行已覆盖）
+export const toolRunningStart = (e: RunningTool) => set(s => ({ runningTools: [...s.runningTools.filter(x => x.key !== e.key), e] }));
+export const toolRunningEnd = (key: number) => set(s => ({ runningTools: s.runningTools.filter(x => x.key !== key) }));
 
 export function useStore(): State {
   return useSyncExternalStore(

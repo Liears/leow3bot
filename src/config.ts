@@ -32,6 +32,8 @@ interface UserConfig {
   webApiKey?: string;
   // thinking（深度思考）
   thinkingBudget?: number;
+  // 子代理模型（/subagent 命令写入；缺省继承主模型 model）
+  subagentModel?: string;
   // 各模型 max_tokens 上限缓存（自动学习，非用户配置面）
   modelLimits?: Record<string, number>;
 }
@@ -99,12 +101,13 @@ function updateHomeConfig(patch: Record<string, unknown>): boolean {
 // 运行时配置更新（onboarding / /model 共用）：更新运行时值——ESM live binding
 // 让 llm.ts 等模块的既有 import 即时拿到新值，零改动；并读改写 ~/.leow3bot/config.json
 // 持久化。返回是否写盘成功（运行时切换总是生效，落盘失败仅影响下次启动）。
-export function applyRuntimeConfig(patch: { apiBaseUrl?: string; apiKey?: string; model?: string; contextWindow?: number }): boolean {
+export function applyRuntimeConfig(patch: { apiBaseUrl?: string; apiKey?: string; model?: string; contextWindow?: number; subagentModel?: string | null }): boolean {
   if (patch.apiBaseUrl !== undefined) API_BASE_URL = patch.apiBaseUrl;
   if (patch.apiKey !== undefined) API_KEY = patch.apiKey;
   if (patch.model !== undefined) MODEL = patch.model;
   if (patch.contextWindow !== undefined) CONTEXT_WINDOW = patch.contextWindow;
-  return updateHomeConfig(patch);
+  if (patch.subagentModel !== undefined) SUBAGENT_MODEL = patch.subagentModel;
+  return updateHomeConfig(patch as Record<string, unknown>);
 }
 
 // —— max_tokens 按模型自适应（code-review F8 → 错误驱动学习）——
@@ -123,6 +126,25 @@ export function setModelMaxTokens(model: string, limit: number): void {
 // model 是否被用户显式配置（false = 允许启动时从 /v1/models 自动探测选型）
 export function hasExplicitModel(): boolean {
   return cfg.model !== undefined;
+}
+
+// —— SubAgent（设计见 docs/subagent-design.md）——
+// 子代理模型：默认继承主模型（行为可预期、零配置）；/subagent 命令显式选择并
+// 持久化到这里。解析顺序：agent 定义 frontmatter model > subagentModel > 继承主模型。
+export let SUBAGENT_MODEL: string | null = cfg.subagentModel ?? null;
+export function getSubagentModel(): string | null { return SUBAGENT_MODEL; }
+export const MAX_SUBAGENT_TURNS = 25;          // 默认轮次（agent 定义可覆盖）
+export const MAX_SUBAGENT_TURNS_HARD = 50;     // 轮次硬上限
+export const MAX_CONCURRENT_SUBAGENTS = 3;     // 并发上限（TUI 无多路面板，多了暗处不可见）
+export const SUBAGENT_REPORT_MAX_CHARS = 4000; // 报告回传上限（超出落盘，主上下文零污染）
+
+// agent 定义扫描目录（后者覆盖前者同名；与 getSkillDirs 同构，兼容 CC 生态）
+export function getAgentDirs(): string[] {
+  return [
+    path.join(homedir(), '.claude', 'agents'),
+    path.join(LEOW3BOT_HOME, 'agents'),
+    path.join(process.cwd(), '.claude', 'agents'),
+  ];
 }
 
 // —— 内置固定值（原 config.json 字段，简化后固化）——

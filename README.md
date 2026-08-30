@@ -87,6 +87,7 @@ npm test                # 类型检查 + 渲染/状态/权限测试
 |---|---|
 | `/help` | 列出全部命令 |
 | `/model [名称]` | 交互式模型选择器；带名称直接切换并持久化 |
+| `/subagent` | 子代理模型选择器（默认跟随主模型） |
 | `/context` `/perf` | 开关底部状态栏（上下文占用 / 性能指标） |
 | `/verbose` | 展开 / 折叠思考过程 |
 | `/compact` | 压缩上下文（图片摘要 + 旧工具结果截断） |
@@ -102,7 +103,7 @@ npm test                # 类型检查 + 渲染/状态/权限测试
 | `Tab` | 斜杠命令补全 |
 | `Ctrl-V` | 粘贴剪贴板图片（截图提问） |
 | 粘贴多行文本 | 自动折叠为 `[Pasted text #1 +17 lines]`，提交时还原完整内容；超长粘贴自动落盘并截断 |
-| `Esc` | 中断正在生成的回复（保留已生成部分） |
+| `Esc` | 中断正在生成的回复（保留已生成部分）；子代理运行中一并中止 |
 | `q` | 退出 |
 
 ### 会话恢复
@@ -130,3 +131,16 @@ npx skills add https://github.com/vercel-labs/skills --skill find-skills
 ```
 
 PDF skill（文字型提取 markdown / 扫描件渲染识别，依赖自动安装）为本地资产，不随仓库分发——将 `skills/pdf/` 目录放入上述任一位置即可启用。用 `/skills` 查看与开关已加载的 skill。
+
+### 子代理（subagent）
+
+主模型可把广度型调查委派给子代理：子代理在独立上下文中运行，内部过程不进主对话，只返回压缩报告。一轮并行发出多个 subagent 调用即并行执行（上限 3）。推荐节奏：先并行侦察拿全局概览，再亲自精读关键处——委派广度，亲为深度。
+
+- 内置 `explore`：只读搜索代理（广度扇出搜索，bash 带写操作拦截），跨多文件定位、梳理结构、大目录探查
+- 自定义子代理与 skill 同格式（frontmatter：`name` / `description` / `tools` / `model` / `maxTurns`，正文 = 子代理 system prompt），放入以下任一目录即生效（后者覆盖前者）：
+  - `~/.claude/agents/` — Claude Code 生态标准位置，现有 agent 文件直接可用
+  - `~/.leow3bot/agents/` — leow3bot 专属目录
+  - `./.claude/agents/` — 项目级
+- 子代理模型默认跟随主模型，`/subagent` 命令显式指定并持久化（agent 定义自带 `model` 的优先）
+- 更多示例（analyst 批量文档分析 / reviewer 代码审查 / researcher 联网调研）见 `docs/agents-examples/`，复制到上述目录即可启用
+- 设计文档：`docs/subagent-design.md`
