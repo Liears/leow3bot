@@ -1,0 +1,2 @@
+# 提交快速门：只跑类型检查（秒级）。全量测试在 pre-push。
+npm run typecheck

@@ -1,0 +1,3 @@
+# 推送全量门：typecheck + vitest（unit/integration）+ E2E（mock LLM + PTY 真进程）。
+# 目标：任何特性/修复在离开本机前必须全量绿。跳过：git push --no-verify
+npm test

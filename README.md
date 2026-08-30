@@ -32,8 +32,12 @@ npm install -g .        # 注册全局 leow3bot 命令
 ```bash
 npm start               # tsx 直接运行源码
 npm run build           # tsup 打包 → dist/main.mjs
-npm test                # 类型检查 + 渲染/状态/权限测试
+npm test                # 全量：类型检查 + vitest(unit/integration) + E2E
+npm run test:watch      # 开发时 watch 模式
 ```
+
+测试体系（unit → integration → E2E，mock LLM 服务器 + PTY 真进程）与自动运行
+（pre-push hook + GitHub Actions CI）见 [docs/testing.md](docs/testing.md)。
 
 ## 使用
 
