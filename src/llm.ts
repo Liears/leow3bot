@@ -28,7 +28,9 @@ export async function* streamWithWatchdog<T>(stream: AsyncIterable<T>, hangMs: n
     }
   } finally {
     if (timer) clearTimeout(timer);
-    try { await it.return?.(undefined as never); } catch { /* noop */ }
+    // 清理必须不阻塞：挂起路径下底层 next() 永悬时 it.return() 也不会 settle，
+    // await 它会把看门狗已转换的挂起错误重新变成永久挂起（清理 fire-and-forget）
+    try { void Promise.resolve(it.return?.(undefined as never)).catch(() => {}); } catch { /* noop */ }
   }
 }
 

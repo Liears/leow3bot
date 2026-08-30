@@ -51,12 +51,17 @@ function readJsonFile(file: string): Record<string, unknown> | null {
 // 不用 first-match-wins——否则 /model 或 onboarding 写出的稀疏 home 文件
 // （只含 model/apiKey）会遮蔽 repo config 里的 apiKey/permissions 等字段，
 // 导致开发态配置静默失效、onboarding 误触发（code-review F5）。
+// LEOW3BOT_HOME 环境变量可重定向用户级 home（E2E 测试隔离，对齐
+// LEOW3BOT_PERMISSIONS_FILE 先例；本地计算防 TDZ，与下方常量保持一致）。
 function loadConfig(): UserConfig {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const proj = readJsonFile(path.join(here, '..', 'config.json')) ?? {};
-  // 直接用 homedir() 拼，不能用 LEOW3BOT_HOME 常量（它在后面才定义，此处处于 TDZ）
-  const home = readJsonFile(path.join(homedir(), '.leow3bot', 'config.json')) ?? {};
+  const home = readJsonFile(path.join(homeDir(), '.leow3bot', 'config.json')) ?? {};
   return { ...proj, ...home } as UserConfig;
+}
+
+function homeDir(): string {
+  return process.env.LEOW3BOT_HOME ? path.resolve(process.env.LEOW3BOT_HOME) : homedir();
 }
 
 const cfg = loadConfig();
@@ -64,7 +69,8 @@ const cfg = loadConfig();
 // —— 用户可配置项（config.json 覆盖；API_BASE_URL/API_KEY/MODEL 为 let，
 //     onboarding 首次配置与 /model 切换经 applyRuntimeConfig 运行时更新）——
 export const DEFAULT_API_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
-export let API_BASE_URL = cfg.apiBaseUrl ?? DEFAULT_API_BASE_URL;
+// LEOW3BOT_API_BASE_URL：测试隔离旋钮（E2E 指向本地 mock 服务器），优先于配置文件
+export let API_BASE_URL = process.env.LEOW3BOT_API_BASE_URL ?? cfg.apiBaseUrl ?? DEFAULT_API_BASE_URL;
 export let API_KEY = cfg.apiKey ?? '';
 export let MODEL = cfg.model ?? 'glm-5.1';
 // 上下文窗口无查询通道（/v1/models 两端点均不带该字段，实测）——onboarding 让
@@ -75,7 +81,9 @@ export let CONTEXT_WINDOW = cfg.contextWindow ?? 192000;
 // false——静默覆盖会把用户全部配置清空（code-review F6）；写失败（权限/磁盘）
 // 同样返回 false，调用方据此如实报告（F7）。
 function updateHomeConfig(patch: Record<string, unknown>): boolean {
-  const file = path.join(homedir(), '.leow3bot', 'config.json');
+  // homeDir()（尊重 LEOW3BOT_HOME 重定向）而非 homedir()——测试隔离下写盘须与
+  // 读取同源（bug 实录：隔离旋钮生效后写盘仍落真实 home，测试污染用户配置）
+  const file = path.join(homeDir(), '.leow3bot', 'config.json');
   let obj: Record<string, unknown> | null = null;
   let existed = false;
   try {
@@ -220,7 +228,8 @@ export const MAX_VIEWS_PER_ROUND = 6;
 export const IMAGE_BATCH_PIXEL_BUDGET = 11_800_000;
 
 // leow3bot 用户级 home：config / sessions / skills 都在这下面
-export const LEOW3BOT_HOME = path.join(homedir(), '.leow3bot');
+// （LEOW3BOT_HOME 环境变量可重定向——E2E 测试隔离）
+export const LEOW3BOT_HOME = path.join(homeDir(), '.leow3bot');
 
 // skill 扫描目录（数组顺序=优先级，后者覆盖前者同名 skill）：
 //   1) ~/.claude/skills      —— Claude 用户级标准（`npx skills add` 默认装这）
