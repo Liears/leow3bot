@@ -192,6 +192,8 @@ export async function handleCommand(cmd: string, args: string[], ctx: CmdCtx): P
 }
 
 // welcome：logo + 右侧 3 行信息（名称版本 / 模型·平台 / 目录），复刻 CC 风格。
+// 版本号单源：读 package.json（resolveJsonModule），发布改版本不再忘改横幅。
+import pkg from '../package.json' with { type: 'json' };
 export function getWelcomeItems(): CommittedItem[] {
   const home = homedir();
   const cwd = process.cwd();
@@ -201,7 +203,7 @@ export function getWelcomeItems(): CommittedItem[] {
     logo: LOGO,
     name: 'Leow3Bot',
     info: [
-      'Leow3Bot v0.1.0',
+      `Leow3Bot v${(pkg as { version: string }).version}`,
       `${MODEL} · ${getProviderLabel()}`,
       cwdShort,
     ],
