@@ -6,6 +6,7 @@
   "bin": {
     "leow3bot": "./dist/main.mjs"
   },
+  "homepage": "https://leow3bot.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/yuanhechen/leow3bot.git"
@@ -27,11 +28,13 @@
     "prepublishOnly": "npm run build",
     "probe": "tsx src/scripts/probe.ts",
     "typecheck": "tsc --noEmit",
+    "docs:dev": "vitepress dev docs-src",
+    "docs:build": "vitepress build docs-src && rm -rf docs/docs && cp -R docs-src/.vitepress/dist docs/docs",
+    "test": "tsc --noEmit && vitest run && npm run test:e2e",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:watch": "vitest",
     "test:e2e": "tsx tests/e2e/run-e2e.ts",
-    "test": "tsc --noEmit && vitest run && npm run test:e2e",
     "prepare": "husky"
   },
   "dependencies": {
@@ -49,14 +52,15 @@
     "@types/node": "^20.19.43",
     "@types/react": "^18.3.31",
     "@types/turndown": "^5.0.6",
-    "husky": "^9.1.7",
     "ink-testing-library": "^4.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^5.6.0",
-    "vitest": "^4.1.11"
+    "vitepress": "^1.6.4",
+    "vitest": "^4.1.11",
+    "husky": "^9.1.7"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "cli",
     "ai-agent",
